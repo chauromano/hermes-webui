@@ -51,6 +51,28 @@ def test_available_models_exposes_primary_and_fallback_badges():
     assert badges.get("anthropic/claude-haiku-4.5", {}).get("label") == "Fallback 2"
 
 
+def test_available_models_exposes_catalog_for_fallback_only_provider():
+    """A configured fallback must be selectable, not merely receive a badge."""
+    result = _models_with_cfg(
+        model_cfg={"provider": "openai-codex", "default": "gpt-5.4"},
+        fallback_providers=[
+            {"provider": "vertex", "model": "google/gemini-3.5-flash"},
+        ],
+    )
+
+    vertex_group = next(
+        (group for group in result.get("groups", []) if group.get("provider_id") == "vertex"),
+        None,
+    )
+    assert vertex_group is not None, (
+        "A fallback-only Vertex route must appear as a picker group, even without "
+        "a providers.vertex config block or direct credential-pool entry."
+    )
+    assert "google/gemini-3.5-flash" in {
+        model.get("id") for model in vertex_group.get("models", [])
+    }
+
+
 def test_duplicate_slash_id_primary_badge_sticks_to_matching_provider_only():
     import textwrap
 
