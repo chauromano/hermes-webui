@@ -1162,6 +1162,11 @@
               <div style="font-size:11px;color:var(--muted);margin-top:4px" data-i18n="settings_desc_model">Used for new conversations. Existing conversations keep their selected model.</div>
             </div>
             <div class="settings-field">
+              <label for="settingsDefaultProject" data-i18n="settings_label_default_project">Default project for new conversations</label>
+              <select id="settingsDefaultProject" style="width:100%;padding:8px;background:var(--code-bg);color:var(--text);border:1px solid var(--border2);border-radius:6px"></select>
+              <div style="font-size:11px;color:var(--muted);margin-top:4px" data-i18n="settings_desc_default_project">New conversations use this project unless you select another project first. Choose Unassigned to leave them outside a project.</div>
+            </div>
+            <div class="settings-field">
               <label data-i18n="settings_label_auxiliary_models">Auxiliary Models</label>
               <div style="font-size:11px;color:var(--muted);margin-bottom:10px" data-i18n="settings_desc_auxiliary_models">Side-task routing for vision, compression, title generation, etc. "Auto" uses your main chat model.</div>
               <div id="auxModelsContainer"></div>

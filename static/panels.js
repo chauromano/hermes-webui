@@ -8606,6 +8606,8 @@ function _preferencesPayloadFromUi(){
   const payload={};
   const sendKeySel=$('settingsSendKey');
   if(sendKeySel) payload.send_key=sendKeySel.value;
+  const defaultProjectSel=$('settingsDefaultProject');
+  if(defaultProjectSel) payload.default_project_id=defaultProjectSel.value||null;
   const langSel=$('settingsLanguage');
   if(langSel) payload.language=langSel.value;
   const showUsageCb=$('settingsShowTokenUsage');
@@ -8843,6 +8845,34 @@ function _syncSettingsMaxTokensPlaceholder(field, fallbackValue){
   field.placeholder=(typeof t==='function')
     ? t('settings_placeholder_max_tokens_none')
     : 'No override';
+}
+
+async function _loadDefaultProjectPreference(settings){
+  const select=$('settingsDefaultProject');
+  if(!select) return;
+  select.innerHTML='';
+  const unassigned=document.createElement('option');
+  unassigned.value='';
+  unassigned.textContent=t('settings_option_unassigned')||'Unassigned';
+  select.appendChild(unassigned);
+  try{
+    const result=await api('/api/projects');
+    const projects=Array.isArray(result&&result.projects)?result.projects:[];
+    for(const project of projects){
+      if(!project||!project.project_id) continue;
+      const option=document.createElement('option');
+      option.value=project.project_id;
+      option.textContent=project.name||project.project_id;
+      select.appendChild(option);
+    }
+  }catch(error){
+    console.warn('[settings] failed to load default-project choices',error);
+  }
+  const configured=String((settings&&settings.default_project_id)||'');
+  select.value=configured;
+  // A project deleted after settings were saved must display as unassigned.
+  if(select.value!==configured) select.value='';
+  select.onchange=_schedulePreferencesAutosave;
 }
 
 async function loadSettingsPanel(){
@@ -9107,6 +9137,7 @@ async function loadSettingsPanel(){
         modelSel.addEventListener('change',()=>{if(typeof syncSettingsModelChip==='function') syncSettingsModelChip();},{once:false});
       }
     }
+    await _loadDefaultProjectPreference(settings);
     // Auxiliary models — load task assignments and provider/model options
     _bindMainAdvancedOptionsButton();
     _loadAuxiliaryModels();

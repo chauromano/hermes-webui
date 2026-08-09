@@ -9150,6 +9150,9 @@ _SETTINGS_DEFAULTS = {
     "render_user_markdown": False,  # opt-in: render full markdown in user messages (#3870)
     "large_text_paste_as_attachment": True,  # convert very large composer text pastes into .md attachments by default
     "project_quick_create_buttons": False,  # opt-in: show per-project "+" quick-create buttons on sidebar project chips (#4676)
+    # Profile-keyed because projects themselves are profile-owned. The WebUI API
+    # exposes only the active profile's selected value as `default_project_id`.
+    "default_project_by_profile": {},
     "structured_code_default_view": "auto",  # JSON/YAML fenced-block default render: auto | on | off (#484 follow-up). auto => Tree when line count >= structured_code_auto_tree_lines, else Raw.
     "structured_code_auto_tree_lines": 10,  # in 'auto' mode, minimum line count to default a JSON/YAML block to Tree view (preserves the original hardcoded >=10 behavior)
     "session_endless_scroll": False,  # auto-load older transcript pages while scrolling upward
@@ -9432,6 +9435,33 @@ _SETTINGS_FLOAT_RANGES = {
     "tts_rate": (0.5, 2.0),
     "tts_pitch": (0.0, 2.0),
 }
+
+
+def default_project_id_for_profile(profile: str | None = None) -> str | None:
+    """Return the configured new-conversation project for *profile*, if any.
+
+    Project existence and ownership are intentionally checked at the session
+    creation boundary, where the target profile is authoritative. This helper
+    only reads the profile-keyed preference without importing the project model.
+    """
+    if profile is None:
+        try:
+            from api.profiles import get_active_profile_name
+            profile = get_active_profile_name()
+        except Exception:
+            profile = "default"
+    key = str(profile or "default").strip() or "default"
+    selected = load_settings().get("default_project_by_profile")
+    if not isinstance(selected, dict):
+        return None
+    project_id = selected.get(key)
+    if not isinstance(project_id, str):
+        return None
+    project_id = project_id.strip()
+    if not project_id or len(project_id) > 128 or "\x00" in project_id:
+        return None
+    return project_id
+
 _SETTINGS_BOOL_KEYS = {
     "onboarding_completed",
     "show_token_usage",
@@ -9629,6 +9659,30 @@ def save_settings(settings: dict) -> dict:
                 if isinstance(v, str) and v.strip():
                     pending_skin = v
                     skin_was_explicit = True
+                continue
+            if k == "default_project_by_profile":
+                if not isinstance(v, dict) or len(v) > 100:
+                    continue
+                cleaned_defaults = {}
+                for profile_name, project_id in v.items():
+                    if (
+                        not isinstance(profile_name, str)
+                        or not isinstance(project_id, str)
+                    ):
+                        continue
+                    profile_name = profile_name.strip()
+                    project_id = project_id.strip()
+                    if (
+                        not profile_name
+                        or len(profile_name) > 64
+                        or "\x00" in profile_name
+                        or not project_id
+                        or len(project_id) > 128
+                        or "\x00" in project_id
+                    ):
+                        continue
+                    cleaned_defaults[profile_name] = project_id
+                current[k] = cleaned_defaults
                 continue
             # Validate enum-constrained keys
             if k in _SETTINGS_ENUM_VALUES and v not in _SETTINGS_ENUM_VALUES[k]:

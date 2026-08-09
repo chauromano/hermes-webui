@@ -2812,6 +2812,7 @@ from api.config import (
     SESSION_AGENT_LOCKS,
     SESSION_AGENT_LOCKS_LOCK,
     CUSTOM_MODELS_ENDPOINT_TIMEOUT_SECONDS,
+    default_project_id_for_profile,
     load_settings,
     persisted_speech_settings_keys,
     save_settings,
@@ -7660,6 +7661,31 @@ def _worktree_default_from_config(profile: str | None) -> bool:
         return False
 
 
+def _default_project_for_new_session(profile: str | None) -> str | None:
+    """Resolve a valid profile-owned project preference for a new session.
+
+    An invalid, deleted, or cross-profile configured project deliberately falls
+    back to no assignment. Session creation must remain usable after project
+    maintenance; it must never attach a new session to a project from another
+    profile.
+    """
+    requested_profile = str(profile or get_active_profile_name() or "default").strip() or "default"
+    project_id = default_project_id_for_profile(requested_profile)
+    if not project_id:
+        return None
+    try:
+        project = next(
+            (item for item in load_projects() if item.get("project_id") == project_id),
+            None,
+        )
+    except Exception:
+        logger.warning("failed to resolve default project for new session", exc_info=True)
+        return None
+    if not project or not _profiles_match(project.get("profile"), requested_profile):
+        return None
+    return project_id
+
+
 def _session_model_state_from_request(
     model: str | None,
     requested_provider: str | None,
@@ -12340,6 +12366,12 @@ def handle_get(handler, parsed) -> bool:
 
     if parsed.path == "/api/settings":
         settings = load_settings()
+        settings["default_project_id"] = default_project_id_for_profile(
+            get_active_profile_name()
+        )
+        # The profile map is installation-private state. The browser receives
+        # only the choice for its active profile.
+        settings.pop("default_project_by_profile", None)
         settings["persisted_speech_keys"] = persisted_speech_settings_keys()
         # Never expose the stored password hash to clients
         settings.pop("password_hash", None)
@@ -14205,12 +14237,20 @@ def handle_post(handler, parsed) -> bool:
                 # thread the drain snapshot already missed).
                 if _register_background_commit_thread(t):
                     t.start()
+        requested_profile = body.get("profile") or None
+        # An explicit project_id (including null) is a caller override. Only an
+        # absent key inherits the active profile's default-project preference.
+        project_id = (
+            (body.get("project_id") or None)
+            if "project_id" in body
+            else _default_project_for_new_session(requested_profile)
+        )
         s = new_session(
             workspace=workspace,
             model=model,
             model_provider=model_provider,
-            profile=body.get("profile") or None,
-            project_id=body.get("project_id") or None,
+            profile=requested_profile,
+            project_id=project_id,
             worktree_info=worktree_info,
             enabled_toolsets=enabled_toolsets,
         )
@@ -15521,6 +15561,34 @@ def handle_post(handler, parsed) -> bool:
             verify_session,
         )
 
+        if "default_project_id" in body:
+            selected_project_id = body.pop("default_project_id")
+            if selected_project_id is not None:
+                if not isinstance(selected_project_id, str):
+                    return bad(handler, "default_project_id must be a project ID or null")
+                selected_project_id = selected_project_id.strip() or None
+            active_profile = get_active_profile_name() or "default"
+            if selected_project_id:
+                selected_project = next(
+                    (project for project in load_projects()
+                     if project.get("project_id") == selected_project_id),
+                    None,
+                )
+                if not selected_project or not _profiles_match(
+                    selected_project.get("profile"), active_profile
+                ):
+                    return bad(handler, "Project not found", 404)
+            current_defaults = load_settings().get("default_project_by_profile")
+            if not isinstance(current_defaults, dict):
+                current_defaults = {}
+            else:
+                current_defaults = dict(current_defaults)
+            if selected_project_id:
+                current_defaults[active_profile] = selected_project_id
+            else:
+                current_defaults.pop(active_profile, None)
+            body["default_project_by_profile"] = current_defaults
+
         if "bot_name" in body:
             body["bot_name"] = (str(body["bot_name"]) or "").strip() or "Hermes"
 
@@ -15610,6 +15678,10 @@ def handle_post(handler, parsed) -> bool:
         from api.config import get_max_tokens_status, set_max_tokens
 
         saved = save_settings(body)
+        saved["default_project_id"] = default_project_id_for_profile(
+            get_active_profile_name()
+        )
+        saved.pop("default_project_by_profile", None)
         saved["persisted_speech_keys"] = persisted_speech_settings_keys()
         if max_tokens_provided:
             max_tokens_status = set_max_tokens(max_tokens_value)
