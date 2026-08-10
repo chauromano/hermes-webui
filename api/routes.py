@@ -7681,7 +7681,7 @@ def _default_project_for_new_session(profile: str | None) -> str | None:
     except Exception:
         logger.warning("failed to resolve default project for new session", exc_info=True)
         return None
-    if not project or not _profiles_match(project.get("profile"), requested_profile):
+    if not project or not project_is_available_to_profile(project, requested_profile):
         return None
     return project_id
 
@@ -9343,6 +9343,7 @@ from api.models import (
     _active_state_db_path,
     load_projects,
     save_projects,
+    project_is_available_to_profile,
     import_cli_session,
     get_cli_sessions,
     get_cli_session_messages,
@@ -13136,8 +13137,10 @@ def handle_get(handler, parsed) -> bool:
             scoped = all_projects
             other_profile_count = 0
         else:
-            scoped = [p for p in all_projects
-                      if _profiles_match(p.get("profile"), active_profile)]
+            scoped = [
+                project for project in all_projects
+                if project_is_available_to_profile(project, active_profile)
+            ]
             other_profile_count = 0 if isolated_profile_mode else len(all_projects) - len(scoped)
         return j(handler, {
             "projects": scoped,
@@ -15574,8 +15577,8 @@ def handle_post(handler, parsed) -> bool:
                      if project.get("project_id") == selected_project_id),
                     None,
                 )
-                if not selected_project or not _profiles_match(
-                    selected_project.get("profile"), active_profile
+                if not selected_project or not project_is_available_to_profile(
+                    selected_project, active_profile
                 ):
                     return bad(handler, "Project not found", 404)
             current_defaults = load_settings().get("default_project_by_profile")
@@ -16007,7 +16010,7 @@ def handle_post(handler, parsed) -> bool:
             )
             if not target:
                 return bad(handler, "Project not found", 404)
-            if not _profiles_match(target.get("profile"), _session_profile):
+            if not project_is_available_to_profile(target, _session_profile):
                 return bad(handler, "Project not found", 404)
         # #3746: acquire the per-session agent lock with a bounded timeout
         # instead of blocking indefinitely. The streaming thread holds this same
@@ -16060,11 +16063,13 @@ def handle_post(handler, parsed) -> bool:
             from api.profiles import _PROFILE_ID_RE
             if not _PROFILE_ID_RE.fullmatch(_requested_profile):
                 return bad(handler, "invalid profile")
+        # User projects are shared deliberately. Profile is only retained by
+        # system project helpers, which mint their own private rows.
         proj = {
             "project_id": uuid.uuid4().hex[:12],
             "name": name,
             "color": color,
-            "profile": _requested_profile or get_active_profile_name() or 'default',
+            "shared": True,
             "created_at": time.time(),
         }
         projects.append(proj)
@@ -16084,9 +16089,9 @@ def handle_post(handler, parsed) -> bool:
         )
         if not proj:
             return bad(handler, "Project not found", 404)
-        # #1614: a project can only be renamed by the profile that owns it.
+        # Shared user projects are managed from any profile; system projects stay private.
         active_profile = get_active_profile_name()
-        if not _profiles_match(proj.get("profile"), active_profile):
+        if not project_is_available_to_profile(proj, active_profile):
             return bad(handler, "Project not found", 404)
         proj["name"] = body["name"].strip()[:128]
         if "color" in body:
@@ -16108,9 +16113,9 @@ def handle_post(handler, parsed) -> bool:
         )
         if not proj:
             return bad(handler, "Project not found", 404)
-        # #1614: a project can only be deleted by the profile that owns it.
+        # Shared user projects are managed from any profile; system projects stay private.
         active_profile = get_active_profile_name()
-        if not _profiles_match(proj.get("profile"), active_profile):
+        if not project_is_available_to_profile(proj, active_profile):
             return bad(handler, "Project not found", 404)
         projects = [p for p in projects if p["project_id"] != body["project_id"]]
         save_projects(projects)

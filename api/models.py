@@ -5963,55 +5963,104 @@ def title_from(messages, fallback: str='Untitled'):
 _PROJECTS_MIGRATION_LOCK = threading.Lock()
 _projects_migrated = False
 
+CRON_PROJECT_NAME = 'Cron Jobs'
+WEBHOOK_PROJECT_NAME = 'Webhooks'
+SYSTEM_PROJECT_NAMES = frozenset({CRON_PROJECT_NAME, WEBHOOK_PROJECT_NAME})
+_CRON_PROJECT_LOCK = threading.Lock()
+_WEBHOOK_PROJECT_LOCK = threading.Lock()
 
-def _backfill_project_profiles_if_needed(projects: list) -> bool:
-    """Tag any legacy untagged projects (`profile` missing) with a sensible default.
 
-    Strategy:
-      1. For each untagged project, look at the sessions assigned to it via
-         the session index. If any session carries a profile, take that
-         profile.  Most installs are single-profile so this picks up the
-         right answer for everyone.
-      2. Otherwise default to 'default'.
+def is_system_project(project: dict | None) -> bool:
+    """Whether a project is an operational, profile-private project."""
+    return bool(isinstance(project, dict) and project.get('name') in SYSTEM_PROJECT_NAMES)
 
-    Returns True if any project was mutated. Safe to call repeatedly — once
-    every project is tagged, this is a no-op. Runs at most once per process
-    (cached via the module-level _projects_migrated flag) but the result is
-    persisted so it's a one-time write.
-    """
-    untagged = [p for p in projects if not p.get('profile')]
-    if not untagged:
+
+def is_shared_project(project: dict | None) -> bool:
+    """Whether a project is a user project available to every Hermes profile."""
+    return bool(isinstance(project, dict) and project.get('shared') and not is_system_project(project))
+
+
+def project_is_available_to_profile(project: dict | None, profile: str | None) -> bool:
+    """Return whether *profile* may view and assign sessions to *project*."""
+    if not isinstance(project, dict):
         return False
+    if is_shared_project(project):
+        return True
+    from api.profiles import _profiles_match
+    return _profiles_match(project.get('profile'), profile)
 
-    # Build session_id -> profile map for the untagged project_ids.
-    session_profile_by_project: dict[str, str] = {}
-    if SESSION_INDEX_FILE.exists():
+
+def _normalised_project_name(project: dict) -> str:
+    return str(project.get('name') or '').strip().casefold()
+
+
+def _migrate_shared_user_projects(projects: list) -> tuple[bool, dict[str, str]]:
+    """Promote ordinary projects to shared and merge legacy duplicate names.
+
+    Legacy releases made every project profile-owned. This migration keeps
+    operational projects private, marks each ordinary project shared, and folds
+    same-name user-project rows into the oldest canonical ID. Callers then
+    retarget persisted sessions before saving the reduced project list.
+    """
+    groups: dict[str, list[dict]] = {}
+    for project in projects:
+        if not isinstance(project, dict) or is_system_project(project):
+            continue
+        name = _normalised_project_name(project)
+        if name:
+            groups.setdefault(name, []).append(project)
+
+    changed = False
+    remap: dict[str, str] = {}
+    survivors: list[dict] = []
+    removed_ids: set[str] = set()
+    for name, group in groups.items():
+        canonical = min(group, key=lambda p: (float(p.get('created_at') or 0), str(p.get('project_id') or '')))
+        canonical_id = str(canonical.get('project_id') or '')
+        if not canonical_id:
+            continue
+        for project in group:
+            project_id = str(project.get('project_id') or '')
+            if project is not canonical:
+                if project_id:
+                    remap[project_id] = canonical_id
+                    removed_ids.add(project_id)
+                changed = True
+        if canonical.get('shared') is not True or 'profile' in canonical:
+            canonical['shared'] = True
+            canonical.pop('profile', None)
+            changed = True
+
+    for project in projects:
+        if str(project.get('project_id') or '') not in removed_ids:
+            survivors.append(project)
+    if len(survivors) != len(projects):
+        projects[:] = survivors
+    return changed, remap
+
+
+def _retarget_project_session_references(remap: dict[str, str]) -> None:
+    """Rewrite durable session project IDs after duplicate project consolidation."""
+    if not remap:
+        return
+    updated: list[Session] = []
+    for path in SESSION_DIR.glob('*.json'):
+        if path.name.startswith('_'):
+            continue
         try:
-            entries = json.loads(SESSION_INDEX_FILE.read_bytes())
-            untagged_ids = {p['project_id'] for p in untagged if p.get('project_id')}
-            for e in entries:
-                pid = e.get('project_id')
-                if pid in untagged_ids and e.get('profile'):
-                    # First session profile wins for the project.
-                    session_profile_by_project.setdefault(pid, e['profile'])
+            session = Session.load(path.stem)
+            if session and session.project_id in remap:
+                session.project_id = remap[session.project_id]
+                session.save(touch_updated_at=False, skip_index=True)
+                updated.append(session)
         except Exception:
-            logger.debug("Failed to read session index for project profile backfill")
-
-    mutated = False
-    for p in untagged:
-        inferred = session_profile_by_project.get(p.get('project_id'), 'default')
-        p['profile'] = inferred
-        mutated = True
-    return mutated
+            logger.warning('Failed to retarget project for session %s', path.stem, exc_info=True)
+    if updated or SESSION_INDEX_FILE.exists():
+        _write_session_index(updates=None)
 
 
 def load_projects(*, _migrate: bool = True) -> list:
-    """Load project list from disk. Returns list of project dicts.
-
-    On first call, runs a one-time migration to back-fill the `profile` field
-    on legacy untagged projects (#1614). Disable via `_migrate=False` for
-    callsites that want the raw on-disk shape (test fixtures, e.g.).
-    """
+    """Load projects and one-time migrate legacy user projects to shared state."""
     global _projects_migrated
     if not PROJECTS_FILE.exists():
         return []
@@ -6021,158 +6070,77 @@ def load_projects(*, _migrate: bool = True) -> list:
         return []
     if _migrate and not _projects_migrated:
         with _PROJECTS_MIGRATION_LOCK:
-            # Re-check inside the lock — another thread may have raced.
             if _projects_migrated:
-                # Per Opus advisor on stage-293: another thread completed
-                # migration and wrote new state to disk while we waited for
-                # the lock. Our `projects` snapshot is the pre-migration
-                # version; re-read so the caller doesn't see stale untagged
-                # rows (which a mutation route could then write back,
-                # silently overwriting the migration).
                 try:
                     return json.loads(PROJECTS_FILE.read_text(encoding='utf-8'))
                 except Exception:
                     return projects
-            if _backfill_project_profiles_if_needed(projects):
+            changed, remap = _migrate_shared_user_projects(projects)
+            if changed:
                 try:
+                    _retarget_project_session_references(remap)
                     save_projects(projects)
-                    _projects_migrated = True
                 except Exception:
-                    logger.debug("Failed to persist project profile backfill")
-                    # Leave _projects_migrated False so a future call retries.
-            else:
-                # Nothing to migrate — already tagged.
-                _projects_migrated = True
+                    logger.exception('Failed to persist shared-project migration')
+                    return projects
+            _projects_migrated = True
     return projects
+
 
 def save_projects(projects) -> None:
     """Write project list to disk."""
     PROJECTS_FILE.write_text(json.dumps(projects, ensure_ascii=False, indent=2), encoding='utf-8')
 
 
-CRON_PROJECT_NAME = 'Cron Jobs'
-_CRON_PROJECT_LOCK = threading.Lock()
-
-
 def ensure_cron_project(create: bool = True) -> str | None:
-    """Return the project_id of the system "Cron Jobs" project for the active profile.
-
-    Each profile gets its own "Cron Jobs" project so cron-spawned sessions in
-    profile A don't surface under the cron chip of profile B (#1614). Lookup
-    keys on (name, profile) — a legacy untagged "Cron Jobs" project (no
-    `profile` field) is treated as belonging to whichever profile first calls
-    this in a given install, then re-tagged.
-
-    When `create` is False, only an EXISTING per-profile cron project is
-    resolved (exact tag, renamed-root alias, or legacy-untagged back-tag);
-    no new project is minted and None is returned instead. Callers gate
-    `create` on `_profile_has_user_projects()` so cron sessions don't force
-    a "Cron Jobs" chip onto installs that never opted into project
-    organization (#5379). Direct callers that omit `create` keep today's
-    unconditional-create behavior.
-
-    Thread-safe and idempotent.  Returns a 12-char hex project_id string, or
-    None if `create` is False and no existing cron project resolves.
-    """
+    """Return the profile-private Cron Jobs project for the active profile."""
     from api.profiles import get_active_profile_name, _is_root_profile
 
     active = get_active_profile_name() or 'default'
     with _CRON_PROJECT_LOCK:
         projects = load_projects()
-        # Look for an existing per-profile cron project. Match either an exact
-        # profile tag or the renamed-root alias (a 'default'-tagged project
-        # under a renamed root, or a renamed-root-tagged project under
-        # 'default'). _is_root_profile is the canonical alias check.
-        for p in projects:
-            if p.get('name') != CRON_PROJECT_NAME:
+        for project in projects:
+            if project.get('name') != CRON_PROJECT_NAME:
                 continue
-            row_profile = p.get('profile')
-            if row_profile == active:
-                return p['project_id']
-            if _is_root_profile(row_profile or 'default') and _is_root_profile(active):
-                return p['project_id']
-        # Reuse a legacy untagged cron project — back-tag it to the active profile.
-        for p in projects:
-            if p.get('name') == CRON_PROJECT_NAME and not p.get('profile'):
-                p['profile'] = active
+            row_profile = project.get('profile')
+            if row_profile == active or (_is_root_profile(row_profile or 'default') and _is_root_profile(active)):
+                return project['project_id']
+        # Legacy Cron Jobs rows were untagged before system projects became explicitly private.
+        for project in projects:
+            if project.get('name') == CRON_PROJECT_NAME and not project.get('profile'):
+                project['profile'] = active
                 save_projects(projects)
-                return p['project_id']
+                return project['project_id']
         if not create:
             return None
-        # Otherwise create a new one tagged with the active profile.
         project_id = uuid.uuid4().hex[:12]
-        projects.append({
-            'project_id': project_id,
-            'name': CRON_PROJECT_NAME,
-            'color': '#6366f1',
-            'profile': active,
-            'created_at': time.time(),
-        })
+        projects.append({'project_id': project_id, 'name': CRON_PROJECT_NAME, 'color': '#6366f1', 'profile': active, 'created_at': time.time()})
         save_projects(projects)
         return project_id
 
 
-WEBHOOK_PROJECT_NAME = 'Webhooks'
-_WEBHOOK_PROJECT_LOCK = threading.Lock()
-
-
 def ensure_webhook_project() -> str:
-    """Return the project_id of the system "Webhooks" project for the active profile."""
+    """Return the profile-private Webhooks project for the active profile."""
     from api.profiles import get_active_profile_name, _is_root_profile
 
     active = get_active_profile_name() or 'default'
     with _WEBHOOK_PROJECT_LOCK:
         projects = load_projects()
-        for p in projects:
-            if p.get('name') != WEBHOOK_PROJECT_NAME:
+        for project in projects:
+            if project.get('name') != WEBHOOK_PROJECT_NAME:
                 continue
-            row_profile = p.get('profile')
-            if row_profile == active:
-                return p['project_id']
-            if _is_root_profile(row_profile or 'default') and _is_root_profile(active):
-                return p['project_id']
-        for p in projects:
-            if p.get('name') == WEBHOOK_PROJECT_NAME and not p.get('profile'):
-                p['profile'] = active
-                save_projects(projects)
-                return p['project_id']
+            row_profile = project.get('profile')
+            if row_profile == active or (_is_root_profile(row_profile or 'default') and _is_root_profile(active)):
+                return project['project_id']
         project_id = uuid.uuid4().hex[:12]
-        projects.append({
-            'project_id': project_id,
-            'name': WEBHOOK_PROJECT_NAME,
-            'color': '#0ea5e9',
-            'profile': active,
-            'created_at': time.time(),
-        })
+        projects.append({'project_id': project_id, 'name': WEBHOOK_PROJECT_NAME, 'color': '#0ea5e9', 'profile': active, 'created_at': time.time()})
         save_projects(projects)
         return project_id
 
 
 def _profile_has_user_projects() -> bool:
-    """True if the active profile already has at least one real (non-system) project.
-
-    "Opted into project organization" means `load_projects()` contains a
-    project whose name is not a reserved system name (`CRON_PROJECT_NAME`,
-    `WEBHOOK_PROJECT_NAME`), tagged to the active profile or its renamed-root
-    alias. Profile/alias matching mirrors `ensure_cron_project`'s own lookup
-    so the two never disagree about which profile a project belongs to.
-
-    Read-only: never mutates projects.json, safe to call as often as needed.
-    """
-    from api.profiles import get_active_profile_name, _is_root_profile
-
-    active = get_active_profile_name() or 'default'
-    reserved = {CRON_PROJECT_NAME, WEBHOOK_PROJECT_NAME}
-    for p in load_projects():
-        if p.get('name') in reserved:
-            continue
-        row_profile = p.get('profile')
-        if row_profile == active:
-            return True
-        if _is_root_profile(row_profile or 'default') and _is_root_profile(active):
-            return True
-    return False
-
+    """True when at least one ordinary user project exists."""
+    return any(not is_system_project(project) for project in load_projects())
 
 def is_cron_session(session_id: str, source_tag: str | None = None) -> bool:
     """Return True if a session originates from a cron job."""

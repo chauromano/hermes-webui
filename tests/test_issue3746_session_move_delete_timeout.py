@@ -120,9 +120,10 @@ def test_delete_guards_each_session_save():
     assert "try:" in block and "except Exception:" in block, (
         "projects/delete must guard each per-session update (#3746)"
     )
-    # The active-profile ownership guard (#1614) must remain intact.
-    assert '_profiles_match(proj.get("profile"), active_profile)' in block, (
-        "projects/delete must keep its cross-profile ownership guard (#1614)"
+    # Authorization must use the shared-project availability guard: it allows
+    # shared user projects while retaining profile isolation for system projects.
+    assert 'project_is_available_to_profile(proj, active_profile)' in block, (
+        "projects/delete must keep its shared/private authorization guard"
     )
 
 
