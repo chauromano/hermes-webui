@@ -891,7 +891,13 @@ function renderMarkdownPreviewContent(data){
   const target=data&&data.el?data.el:$('previewMd');
   if(!data||!data.el) showPreview('md');
   target.innerHTML=renderMd(data.content);
-  requestAnimationFrame(()=>{if(typeof renderKatexBlocks==='function')renderKatexBlocks();});
+  // renderMd() emits Mermaid and KaTeX placeholders. The workspace preview is
+  // outside the chat-message hydration lifecycle, so explicitly hydrate both
+  // features after the preview DOM has been attached and laid out.
+  requestAnimationFrame(()=>{
+    if(typeof renderMermaidBlocks==='function') renderMermaidBlocks(target);
+    if(typeof renderKatexBlocks==='function') renderKatexBlocks(target);
+  });
 }
 
 function renderCodePreviewContent(path, content){

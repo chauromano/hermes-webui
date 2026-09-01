@@ -56,12 +56,14 @@ def test_markdown_render_helper_runs_render_md_and_katex():
 
     target_pos = helper.find("const target=data&&data.el?data.el:$('previewMd')")
     render_pos = helper.find("target.innerHTML=renderMd(data.content)")
-    katex_pos = helper.rfind("renderKatexBlocks")
+    mermaid_pos = helper.find("renderMermaidBlocks(target)")
+    katex_pos = helper.find("renderKatexBlocks(target)")
     assert target_pos != -1, "Helper must honor an explicit markdown render target"
     assert "if(!data||!data.el) showPreview('md')" in helper
     assert render_pos != -1, "Helper must rich-render markdown"
+    assert mermaid_pos != -1, "Helper must hydrate Mermaid diagrams in file previews"
     assert katex_pos != -1, "Helper must preserve KaTeX enhancement"
-    assert target_pos < render_pos < katex_pos
+    assert target_pos < render_pos < mermaid_pos < katex_pos
 
 
 def test_large_markdown_fallback_sets_raw_content_before_size_gate():
