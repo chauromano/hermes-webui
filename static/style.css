@@ -5719,10 +5719,12 @@ main.main > #mainPlugin{display:none;}
 .msg-time{font-size:10px;color:var(--muted);opacity:.6;margin-left:6px;}
 .msg-role:hover .msg-time{opacity:1;}
 
-/* ── Mermaid diagrams ── */
-.mermaid-block{background:var(--code-bg);border-radius:8px;padding:16px;margin:8px 0;overflow-x:auto;}
+/* ── Mermaid and PlantUML diagrams ── */
+.mermaid-block,.plantuml-block{background:var(--code-bg);border-radius:8px;padding:16px;margin:8px 0;overflow-x:auto;}
 .mermaid-rendered{background:transparent;padding:8px 0;}
 .mermaid-rendered svg{max-width:100%;height:auto;cursor:default;}
+.plantuml-rendered-wrap{background:transparent;padding:8px 0;text-align:center;}
+.plantuml-rendered{display:inline-block;max-width:100%;height:auto;}
 
 /* ── Session projects ── */
 .session-source-tabs{display:flex;gap:4px;padding:4px 10px 8px;flex-shrink:0;}

@@ -7636,6 +7636,8 @@ function renderMd(raw){
     if(lang==='mermaid'&&!looksLikeLineNumberedToolOutput&&looksLikeMermaidStart){
       const id='mermaid-'+Math.random().toString(36).slice(2,10);
       _preBlock_stash.push(`<div class="mermaid-block" data-mermaid-id="${id}">${esc(code.trim())}</div>`);
+    } else if(/^(plantuml|puml|uml)$/.test(lang)){
+      _preBlock_stash.push(`<div class="plantuml-block">${esc(code.trim())}</div>`);
     } else {
       const h=lang?`<div class="pre-header">${esc(lang)}</div>`:'';
       const langAttr=lang?` class="language-${esc(lang)}"`:'';
@@ -8034,7 +8036,7 @@ function renderMd(raw){
       return `<span${_cls(a.class,['task-done','task-todo','katex-inline'])}${a['data-katex']==='inline'?' data-katex="inline"':''}>`;
     }
     if(name==='div'){
-      const cls=_cls(a.class,['pre-header','mermaid-block','katex-block']);
+      const cls=_cls(a.class,['pre-header','mermaid-block','plantuml-block','katex-block']);
       const mermaid=a['data-mermaid-id']?` data-mermaid-id="${esc(a['data-mermaid-id'])}"`:'';
       const katex=a['data-katex']==='display'?' data-katex="display"':'';
       return `<div${cls}${mermaid}${katex}>`;
@@ -8101,7 +8103,7 @@ function renderMd(raw){
   // fix targeted the wrong layer (Prism token white-space) — by the time it
   // ran, the \n had already been replaced. The CSS rule is kept as defense
   // in depth.
-  s=s.replace(/(<div class="pre-header">[\s\S]*?<\/div>)?<pre[^>]*>[\s\S]*?<\/pre>|<div class="(mermaid-block|katex-block)"[\s\S]*?<\/div>/g,m=>{
+  s=s.replace(/(<div class="pre-header">[\s\S]*?<\/div>)?<pre[^>]*>[\s\S]*?<\/pre>|<div class="(mermaid-block|plantuml-block|katex-block)"[\s\S]*?<\/div>/g,m=>{
     _pre_stash.push(m);
     return '\x00E'+(_pre_stash.length-1)+'\x00';
   });
@@ -19391,6 +19393,7 @@ function postProcessRenderedMessages(container) {
   loadExcalidrawInline(container);
   loadPdfInline(container);
   loadHtmlInline(container);
+  renderPlantUmlBlocks(container);
   renderMermaidBlocks(container);
   renderKatexBlocks(container);
   initTreeViews(container);
@@ -19969,6 +19972,26 @@ function loadHtmlInline(container){
       .catch(()=>{
         const dlUrl=publicMediaUrl+'&download=1'+snapQuery;
         el.outerHTML=`<div class="html-preview-fallback"><a class="msg-media-link" href="${dlUrl}" download="${esc(fname)}">📎 ${esc(fname)}</a><br><span style="color:var(--muted);font-size:12px">${t('html_error')}</span></div>`;
+      });
+  });
+}
+
+function renderPlantUmlBlocks(container){
+  const root=container||document;
+  const blocks=root.querySelectorAll('.plantuml-block:not([data-rendered])');
+  blocks.forEach(block=>{
+    block.dataset.rendered='true';
+    const source=block.textContent||'';
+    api('/api/plantuml/render',{method:'POST',body:JSON.stringify({source})})
+      .then(result=>{
+        if(!result||!result.svg_data_uri) throw new Error('missing SVG');
+        block.innerHTML=`<img class="plantuml-rendered" src="${esc(result.svg_data_uri)}" alt="PlantUML diagram">`;
+        block.classList.add('plantuml-rendered-wrap');
+      })
+      .catch(()=>{
+        block.classList.remove('plantuml-block');
+        block.classList.add('prewrap');
+        block.innerHTML=`<div class="pre-header">plantuml</div><pre><code>${esc(source)}</code></pre>`;
       });
   });
 }

@@ -895,6 +895,7 @@ function renderMarkdownPreviewContent(data){
   // outside the chat-message hydration lifecycle, so explicitly hydrate both
   // features after the preview DOM has been attached and laid out.
   requestAnimationFrame(()=>{
+    if(typeof renderPlantUmlBlocks==='function') renderPlantUmlBlocks(target);
     if(typeof renderMermaidBlocks==='function') renderMermaidBlocks(target);
     if(typeof renderKatexBlocks==='function') renderKatexBlocks(target);
   });

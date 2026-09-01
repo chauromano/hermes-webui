@@ -15029,6 +15029,14 @@ def handle_post(handler, parsed) -> bool:
             diag.finish()
         return True
 
+    if parsed.path == "/api/plantuml/render":
+        from api.plantuml import PlantUmlRenderError, render_svg_data_uri
+
+        try:
+            return j(handler, {"svg_data_uri": render_svg_data_uri(body.get("source"))})
+        except PlantUmlRenderError as exc:
+            return bad(handler, str(exc), status=exc.status)
+
     if parsed.path == "/api/escape/authorize":
         return _handle_escape_authorize(handler, parsed, body)
 
