@@ -341,6 +341,8 @@ def test_gateway_chat_worker_translates_sse_and_persists_session(tmp_path, monke
     saved = models.get_session(s.session_id)
     assert [m["role"] for m in saved.messages] == ["user", "assistant"]
     assert saved.messages[-1]["content"] == "hello"
+    assert saved.messages[-1]["_usedModel"] == "test-model"
+    assert isinstance(saved.messages[-1]["_turnDuration"], float)
     assert isinstance(saved.messages[0]["timestamp"], float)
     assert isinstance(saved.messages[1]["timestamp"], float)
     assert saved.messages[0]["timestamp"] < saved.messages[1]["timestamp"]
@@ -394,6 +396,10 @@ def test_gateway_chat_worker_translates_sse_and_persists_session(tmp_path, monke
         "tid": "call-1",
     }) in event_pairs
     assert all(len(item) == 3 and item[2] for item in events)
+    done_payloads = [item[1] for item in events if item[0] == "done"]
+    assert len(done_payloads) == 1
+    assert done_payloads[0]["usage"]["used_model"] == "test-model"
+    assert isinstance(done_payloads[0]["usage"]["duration_seconds"], float)
 
 
 def test_gateway_chat_worker_classifies_terminal_provider_error_without_text(tmp_path, monkeypatch):
@@ -1596,3 +1602,57 @@ def test_gateway_worker_skips_runs_api_when_opt_in_absent():
     finally:
         with STREAMS_LOCK:
             STREAMS.pop(stream_id, None)
+
+
+def test_gateway_chat_worker_stamps_fallback_chunk_model(tmp_path, monkeypatch):
+    session_dir = tmp_path / "sessions"
+    session_dir.mkdir()
+    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
+    monkeypatch.setattr(models, "SESSION_INDEX_FILE", session_dir / "_index.json")
+    monkeypatch.setattr(models, "SESSIONS", OrderedDict())
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def __iter__(self):
+            yield b'data: {"model":"deepseek/deepseek-v4-flash","choices":[{"delta":{"content":"fallback response"}}],"usage":{"prompt_tokens":10,"completion_tokens":5}}\n\n'
+            yield b'data: [DONE]\n\n'
+
+    monkeypatch.setenv("HERMES_WEBUI_GATEWAY_BASE_URL", "http://gateway.local")
+    monkeypatch.setenv("HERMES_WEBUI_GATEWAY_API_KEY", "secret-token")
+    monkeypatch.setattr(streaming, "_load_webui_prefill_context", lambda cfg: {"status": "empty", "messages": []})
+    monkeypatch.setattr(streaming, "_prefill_messages_with_webui_context", lambda ctx, cfg: [])
+    monkeypatch.setattr(gateway_chat.urllib.request, "urlopen", lambda req, timeout=0: FakeResponse())
+
+    s = new_session()
+    stream_id = "stream-gateway-fallback-test"
+    s.active_stream_id = stream_id
+    s.pending_user_message = "test"
+    s.save()
+    channel = create_stream_channel()
+    subscriber = channel.subscribe()
+    STREAMS[stream_id] = channel
+
+    gateway_chat._run_gateway_chat_streaming(
+        s.session_id,
+        "test",
+        "requested-primary-model",
+        str(tmp_path),
+        stream_id,
+        [],
+    )
+
+    saved = models.get_session(s.session_id)
+    assert saved.messages[-1]["_usedModel"] == "deepseek/deepseek-v4-flash"
+    assert isinstance(saved.messages[-1]["_turnDuration"], float)
+
+    events = []
+    while not subscriber.empty():
+        events.append(subscriber.get_nowait())
+    done_payloads = [item[1] for item in events if item[0] == "done"]
+    assert len(done_payloads) == 1
+    assert done_payloads[0]["usage"]["used_model"] == "deepseek/deepseek-v4-flash"

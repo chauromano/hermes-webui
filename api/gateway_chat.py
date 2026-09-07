@@ -468,11 +468,23 @@ def _gateway_stream_usage(payload: dict) -> dict:
     usage = payload.get("usage") if isinstance(payload, dict) else None
     if not isinstance(usage, dict):
         return {}
-    return {
+    res = {
         "input_tokens": int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0),
         "output_tokens": int(usage.get("completion_tokens") or usage.get("output_tokens") or 0),
         "estimated_cost": usage.get("estimated_cost") or usage.get("estimated_cost_usd") or 0,
     }
+    used_model = usage.get("used_model") or (
+        usage.get("runtime", {}).get("model")
+        if isinstance(usage.get("runtime"), dict)
+        else None
+    )
+    if used_model:
+        res["used_model"] = str(used_model).strip()
+    if isinstance(usage.get("runtime"), dict):
+        res["runtime"] = usage["runtime"]
+    if usage.get("gateway_routing"):
+        res["gateway_routing"] = usage["gateway_routing"]
+    return res
 
 
 def _gateway_reasoning_delta(payload: dict) -> str:
@@ -647,6 +659,8 @@ def _run_gateway_runs_api_streaming(
         raise
 
     usage: dict = {}
+    if run_data.get("model"):
+        usage["used_model"] = str(run_data["model"]).strip()
     _publish_gateway_run_id(stream_id, run_id)
 
     url_events = f"{base_url.rstrip('/')}/v1/runs/{run_id}/events"
@@ -746,6 +760,8 @@ def _run_gateway_runs_api_streaming(
                     final_text = output
                     if stream_id in STREAM_PARTIAL_TEXT:
                         STREAM_PARTIAL_TEXT[stream_id] = output
+                if payload.get("model"):
+                    usage["used_model"] = str(payload["model"]).strip()
                 usage.update({k: v for k, v in _gateway_stream_usage(payload).items() if v})
                 sse_event = "message"
                 continue
@@ -931,10 +947,11 @@ def _run_gateway_chat_streaming(
         # path (the teardown finally below never runs when we early-return here).
         clear_session_writeback_owner_if_owned(session_id, stream_id)
         return
+    turn_started_at = time.time()
     register_active_run(
         stream_id,
         session_id=session_id,
-        started_at=time.time(),
+        started_at=turn_started_at,
         phase="gateway-starting",
         workspace=str(workspace),
         model=model,
@@ -1229,6 +1246,8 @@ def _run_gateway_chat_streaming(
                     last_payload = payload
                     if payload.get("error"):
                         terminal_error = str(payload["error"])
+                    if payload.get("model") and not usage.get("used_model"):
+                        usage["used_model"] = str(payload.get("model")).strip()
                     reasoning_delta = _gateway_sse_reasoning_delta(payload)
                     if reasoning_delta:
                         if stream_id in STREAM_REASONING_TEXT:
@@ -1242,6 +1261,8 @@ def _run_gateway_chat_streaming(
                         put_gateway_event("token", {"text": delta})
                     usage.update({k: v for k, v in _gateway_stream_usage(payload).items() if v})
             usage.update({k: v for k, v in _gateway_stream_usage(last_payload).items() if v})
+            if last_payload.get("model") and not usage.get("used_model"):
+                usage["used_model"] = str(last_payload.get("model")).strip()
         assistant_text = final_text.strip()
         if terminal_error:
             error_payload = _settle_gateway_terminal_error(
@@ -1292,7 +1313,29 @@ def _run_gateway_chat_streaming(
             user_msg["timestamp"] = float(
                 active_turn_identity.get("timestamp") or now
             )
+            turn_duration_seconds = max(0.001, time.time() - turn_started_at)
+            _used_model = str(usage.get("used_model") or model or "").strip()
+            _gateway_routing = None
+            if usage.get("gateway_routing") and isinstance(usage["gateway_routing"], dict):
+                _gateway_routing = usage["gateway_routing"]
+            elif isinstance(usage.get("runtime"), dict):
+                try:
+                    from api.streaming import _normalize_gateway_routing_metadata
+
+                    _gateway_routing = _normalize_gateway_routing_metadata(
+                        usage["runtime"],
+                        requested_model=model,
+                        requested_provider=model_provider,
+                    )
+                except Exception:
+                    logger.debug("Failed to normalize gateway routing metadata", exc_info=True)
+
             assistant_msg = {"role": "assistant", "content": assistant_text, "timestamp": assistant_ts}
+            if _used_model:
+                assistant_msg["_usedModel"] = _used_model
+            assistant_msg["_turnDuration"] = round(turn_duration_seconds, 3)
+            if _gateway_routing:
+                assistant_msg["_gatewayRouting"] = _gateway_routing
             saved_reasoning = STREAM_REASONING_TEXT.get(stream_id, "")
             if saved_reasoning:
                 assistant_msg["reasoning"] = saved_reasoning
@@ -1354,6 +1397,20 @@ def _run_gateway_chat_streaming(
                         if latest_text == msg_norm:
                             display = display[:-1]
                 s.messages = display + [user_msg, assistant_msg]
+            if s.messages:
+                for _dm in reversed(s.messages):
+                    if isinstance(_dm, dict) and _dm.get("role") == "assistant":
+                        if _used_model:
+                            _dm["_usedModel"] = _used_model
+                        _dm["_turnDuration"] = round(turn_duration_seconds, 3)
+                        if _gateway_routing:
+                            _dm["_gatewayRouting"] = _gateway_routing
+                        break
+            if _gateway_routing:
+                s.gateway_routing = _gateway_routing
+                _history = list(getattr(s, "gateway_routing_history", None) or [])
+                _history.append(_gateway_routing)
+                s.gateway_routing_history = _history[-50:]
             s.active_stream_id = None
             s.pending_user_message = None
             s.pending_attachments = None
@@ -1438,6 +1495,11 @@ def _run_gateway_chat_streaming(
                 session_id,
                 goal_exc,
             )
+        if _used_model:
+            usage["used_model"] = _used_model
+        usage["duration_seconds"] = round(turn_duration_seconds, 3)
+        if _gateway_routing:
+            usage["gateway_routing"] = _gateway_routing
         from api.streaming import _session_payload_with_full_messages
         gateway_session_payload = _session_payload_with_full_messages(s, tool_calls=[])
         put_gateway_event("done", {"session": redact_session_data(gateway_session_payload), "usage": usage})
