@@ -1200,6 +1200,7 @@ _PROVIDER_DISPLAY = {
     "nvidia": "NVIDIA NIM",
     "xiaomi": "Xiaomi",
     "bedrock": "AWS Bedrock",
+    "vertex": "Google Vertex AI",
 }
 
 # Provider alias → canonical slug.  Users configure providers using the
@@ -1252,6 +1253,10 @@ _PROVIDER_ALIASES = {
     "nemotron": "nvidia",
     "mimo": "xiaomi",
     "xiaomi-mimo": "xiaomi",
+    "google-vertex": "vertex",
+    "vertex-ai": "vertex",
+    "gcp-vertex": "vertex",
+    "vertexai": "vertex",
     # Legacy alias — earlier WebUI builds wrote ``provider: local`` for unknown
     # loopback endpoints, but ``local`` is not registered in
     # ``hermes_cli.auth.PROVIDER_REGISTRY``. Routing it through ``custom``
@@ -1909,6 +1914,19 @@ _PROVIDER_MODELS = {
         {"id": "global.anthropic.claude-opus-4-5-20251101-v1:0",   "label": "GLOBAL Anthropic Claude Opus 4.5"},
         {"id": "global.anthropic.claude-sonnet-4-5-20250929-v1:0", "label": "Global Claude Sonnet 4.5"},
         {"id": "global.anthropic.claude-haiku-4-5-20251001-v1:0",  "label": "Global Anthropic Claude Haiku 4.5"},
+    ],
+    # Google Vertex AI — static fallback list; live model list is fetched via
+    # hermes_cli.models.provider_model_ids("vertex") when available.
+    "vertex": [
+        {"id": "google/gemini-3.8-flash",            "label": "Gemini 3.8 Flash"},
+        {"id": "google/gemini-3.1-pro-preview",       "label": "Gemini 3.1 Pro Preview"},
+        {"id": "google/gemini-3-pro-preview",         "label": "Gemini 3 Pro Preview"},
+        {"id": "google/gemini-3.6-flash",             "label": "Gemini 3.6 Flash"},
+        {"id": "google/gemini-3.5-flash",             "label": "Gemini 3.5 Flash"},
+        {"id": "google/gemini-3.5-flash-lite",        "label": "Gemini 3.5 Flash Lite"},
+        {"id": "google/gemini-3-flash-preview",       "label": "Gemini 3 Flash Preview"},
+        {"id": "google/gemini-3.1-flash-lite-preview","label": "Gemini 3.1 Flash Lite Preview"},
+        {"id": "google/gemini-3.1-flash-lite",        "label": "Gemini 3.1 Flash Lite"},
     ],
 }
 
@@ -7107,6 +7125,12 @@ def get_available_models(*, prefer_cache: bool = False, force_refresh: bool = Fa
                 "MISTRAL_API_KEY",
                 "AWS_ACCESS_KEY_ID",
                 "AWS_SECRET_ACCESS_KEY",
+                "VERTEX_PROJECT",
+                "VERTEX_PROJECT_ID",
+                "GOOGLE_CLOUD_PROJECT",
+                "VERTEX_CREDENTIALS_PATH",
+                "GOOGLE_APPLICATION_CREDENTIALS",
+                "CLOUDSDK_CONFIG",
             ):
                 val = _thread_local_env_value(k).strip()
                 if val:
@@ -7155,6 +7179,16 @@ def get_available_models(*, prefer_cache: bool = False, force_refresh: bool = Fa
             # Detect when both access key and secret are available (#2720).
             if all_env.get("AWS_ACCESS_KEY_ID") and all_env.get("AWS_SECRET_ACCESS_KEY"):
                 detected_providers.add("bedrock")
+            # Google Vertex AI uses ADC / GCP project configuration.
+            if (
+                all_env.get("VERTEX_PROJECT")
+                or all_env.get("VERTEX_PROJECT_ID")
+                or all_env.get("GOOGLE_CLOUD_PROJECT")
+                or all_env.get("VERTEX_CREDENTIALS_PATH")
+                or all_env.get("GOOGLE_APPLICATION_CREDENTIALS")
+                or (isinstance(cfg.get("vertex"), dict) and (cfg["vertex"].get("project") or cfg["vertex"].get("project_id")))
+            ):
+                detected_providers.add("vertex")
             # LM Studio: detect via LM_API_KEY + LM_BASE_URL in ~/.hermes/.env
             if all_env.get("LM_API_KEY") and all_env.get("LM_BASE_URL"):
                 detected_providers.add("lmstudio")
