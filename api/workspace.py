@@ -52,8 +52,24 @@ def _profile_state_dir() -> Path:
         name = get_active_profile_name()
         if name and name != 'default':
             d = get_active_hermes_home() / 'webui_state'
-            d.mkdir(parents=True, exist_ok=True)
-            return d
+            try:
+                d.mkdir(parents=True, exist_ok=True)
+                test_file = d / '.write_probe'
+                test_file.touch()
+                test_file.unlink(missing_ok=True)
+                return d
+            except (OSError, PermissionError):
+                fallback = _GLOBAL_WS_FILE.parent / 'profiles' / name / 'webui_state'
+                fallback.mkdir(parents=True, exist_ok=True)
+                for f in ('workspaces.json', 'last_workspace.txt'):
+                    src = d / f
+                    dst = fallback / f
+                    if src.is_file() and not dst.exists():
+                        try:
+                            dst.write_text(src.read_text(encoding='utf-8'), encoding='utf-8')
+                        except Exception:
+                            pass
+                return fallback
     except ImportError:
         logger.debug("Failed to import profiles module, using global state dir")
     return _GLOBAL_WS_FILE.parent
