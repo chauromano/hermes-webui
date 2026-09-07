@@ -1261,8 +1261,10 @@ def _run_gateway_chat_streaming(
                         put_gateway_event("token", {"text": delta})
                     usage.update({k: v for k, v in _gateway_stream_usage(payload).items() if v})
             usage.update({k: v for k, v in _gateway_stream_usage(last_payload).items() if v})
-            if last_payload.get("model") and not usage.get("used_model"):
+            if last_payload.get("model"):
                 usage["used_model"] = str(last_payload.get("model")).strip()
+            elif not usage.get("used_model") and model:
+                usage["used_model"] = str(model).strip()
         assistant_text = final_text.strip()
         if terminal_error:
             error_payload = _settle_gateway_terminal_error(
@@ -1314,7 +1316,13 @@ def _run_gateway_chat_streaming(
                 active_turn_identity.get("timestamp") or now
             )
             turn_duration_seconds = max(0.001, time.time() - turn_started_at)
-            _used_model = str(usage.get("used_model") or model or "").strip()
+            _used_model = str(
+                (usage.get("gateway_routing") or {}).get("model")
+                or (usage.get("runtime") or {}).get("model")
+                or usage.get("used_model")
+                or model
+                or ""
+            ).strip()
             _gateway_routing = None
             if usage.get("gateway_routing") and isinstance(usage["gateway_routing"], dict):
                 _gateway_routing = usage["gateway_routing"]
