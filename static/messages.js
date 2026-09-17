@@ -1649,7 +1649,23 @@ async function send(){
   setComposerStatus(_submittedFiles.length?'Uploading…':'');
   let uploaded=[];
   try{uploaded=await uploadPendingFiles({files:_submittedFiles, sessionId:activeSid, clearPending:false});}
-  catch(e){if(!text){setComposerStatus(`Upload error: ${e.message}`);return;}}
+  catch(e){
+    setComposerStatus(`Upload error: ${e.message}`);
+    if(typeof showToast==='function') showToast(`Upload failed: ${e.message}`, 6000, 'error');
+    const msgEl=$('msg');
+    if(msgEl && !msgEl.value) msgEl.value = text;
+    S.pendingFiles = [..._submittedFiles];
+    if(typeof renderTray==='function') renderTray();
+    return;
+  }
+  if(_submittedFiles.length && !uploaded.length){
+    setComposerStatus('Upload failed');
+    const msgEl=$('msg');
+    if(msgEl && !msgEl.value) msgEl.value = text;
+    S.pendingFiles = [..._submittedFiles];
+    if(typeof renderTray==='function') renderTray();
+    return;
+  }
   // Clear the uploading status now that upload is done — if we don't clear here
   // it stays visible for the entire duration of the agent stream, since
   // setComposerStatus('') is only called in setBusy(false), not setBusy(true).

@@ -7,7 +7,7 @@ import re as _re
 import tempfile
 from pathlib import Path
 
-from api.config import MAX_UPLOAD_BYTES, STATE_DIR
+from api.config import MAX_UPLOAD_BYTES, STATE_DIR, MIME_MAP
 from api.helpers import j
 from api.models import get_session
 from api.profiles import _profiles_match, get_active_profile_name as _get_active_profile_name
@@ -238,7 +238,7 @@ def handle_upload(handler):
             return j(handler, {'error': 'Upload destination rejected'}, status=403)
         with os.fdopen(_wfd, 'wb', closefd=True) as _wfh:
             _wfh.write(file_bytes)
-        mime = mimetypes.guess_type(safe_name)[0] or 'application/octet-stream'
+        mime = MIME_MAP.get(dest.suffix.lower()) or mimetypes.guess_type(safe_name)[0] or 'application/octet-stream'
         return j(handler, {
             'filename': dest.name,
             'path': str(dest),
@@ -696,7 +696,7 @@ def handle_workspace_upload(handler):
                 return j(handler, {'error': f'Path traversal blocked: {safe_name}'}, status=403)
             with os.fdopen(_wfd, 'wb', closefd=True) as _wfh:
                 _wfh.write(file_bytes)
-            mime = mimetypes.guess_type(safe_name)[0] or 'application/octet-stream'
+            mime = MIME_MAP.get(dest.suffix.lower()) or mimetypes.guess_type(safe_name)[0] or 'application/octet-stream'
 
             # For archives, optionally extract into the target directory.
             # Suffix set MUST match extract_archive()'s supported formats, else
