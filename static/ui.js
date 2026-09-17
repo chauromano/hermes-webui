@@ -18608,8 +18608,10 @@ function _toolActionLabelText(tc, opts){
     };
     const v=verbs[k]||verbs.unknown;
     const verb=v[s]||v.running;
-    const object=tgt||v.fallback||disp||'tool';
     if(err) return `Failed ${String(v.running||verb).toLowerCase()} ${object}`;
+    if(k==='shell'&&tgt&&tgt!=='a command'){
+      return `${verb}: ${tgt}`;
+    }
     return `${verb} ${object}`;
   },kind,state,target,display,isErr);
 }
@@ -18989,6 +18991,10 @@ function buildToolCard(tc){
   if(_isMemorySave(tc)){row.setAttribute('data-memory-save','1');row.removeAttribute('data-skill-update');}
   else if(_isSkillUpdate(tc)){row.setAttribute('data-skill-update','1');row.removeAttribute('data-memory-save');}
   else {row.removeAttribute('data-memory-save');row.removeAttribute('data-skill-update');}
+  if(hasDetail&&typeof _worklogDetailsExpandedDefault==='function'&&_worklogDetailsExpandedDefault()){
+    const cardEl=row.querySelector('.tool-card');
+    if(cardEl) cardEl.classList.add('open');
+  }
   return row;
 }
 
@@ -19269,8 +19275,13 @@ function appendLiveToolCard(tc){
   if(tid){
     const existing=group.querySelector(`.tool-card-row[data-live-tid="${CSS.escape(tid)}"]`);
     if(existing){
+      const wasOpen=!!(existing.querySelector('.tool-card.open'));
       const replacement=buildToolCard(tc);
       replacement.dataset.liveTid=tid;
+      if(wasOpen){
+        const card=replacement.querySelector('.tool-card');
+        if(card) card.classList.add('open');
+      }
       existing.replaceWith(replacement);
       _syncToolCallGroupSummary(group);
       _moveLiveRunStatusToTurnEnd();

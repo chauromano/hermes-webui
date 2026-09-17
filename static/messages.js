@@ -5569,6 +5569,9 @@ function attachLiveStream(activeSid, streamId, uploaded=[], options={}){
     }
 
     if(isComplete){
+      if(d.result && !tc.snippet){
+        tc.snippet=String(d.result);
+      }
       if(d.preview){
         tc.snippet=tc.snippet||String(d.preview||'');
         if(!tc.preview) tc.preview=String(d.preview||'');
@@ -5578,6 +5581,17 @@ function attachLiveStream(activeSid, streamId, uploaded=[], options={}){
     }
     if(d.args!==undefined) tc.args=d.args;
     if(d.snippet!==undefined) tc.snippet=d.snippet;
+    if(d.command!==undefined) tc.command=d.command;
+    if(tc.preview && !tc.command){
+      let p=String(tc.preview).trim();
+      if(p.startsWith(name+':')) p=p.slice(name.length+1).trim();
+      if(p.startsWith('$')) p=p.slice(1).trim();
+      if(p && !p.startsWith('{')) tc.command=p;
+    }
+    if(tc.args && !tc.command){
+      const aCmd=tc.args.command||tc.args.cmd;
+      if(aCmd) tc.command=String(aCmd).trim();
+    }
     tc._liveToolCallSignature = _toolCallSignature(tc,tc.activityBurstId,tc.activitySegmentSeq);
     tc.activityBurstId = Number.isFinite(Number(tc.activityBurstId))
       ? Number(tc.activityBurstId)
