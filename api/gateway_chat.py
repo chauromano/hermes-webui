@@ -591,6 +591,11 @@ def _run_gateway_runs_api_streaming(
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
             headers["X-Hermes-Session-Key"] = f"webui:{session_id}"
+        if workspace:
+            headers["X-Hermes-Workspace"] = str(workspace)
+        _run_profile = getattr(session, "profile", None)
+        if _run_profile:
+            headers["X-Hermes-Profile"] = str(_run_profile)
         message_content: Any = str(msg_text or "")
         if attachments:
             try:
@@ -1132,6 +1137,12 @@ def _run_gateway_chat_streaming(
                 # Scope Gateway long-term continuity to this WebUI conversation
                 # without exposing the browser's auth cookie or CSRF material.
                 headers["X-Hermes-Session-Key"] = f"webui:{session_id}"
+            active_workspace = getattr(s, "workspace", None) or workspace
+            if active_workspace:
+                headers["X-Hermes-Workspace"] = str(active_workspace)
+            active_profile = getattr(s, "profile", None)
+            if active_profile:
+                headers["X-Hermes-Profile"] = str(active_profile)
             message_content: Any = str(msg_text or "")
             if attachments:
                 try:

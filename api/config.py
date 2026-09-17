@@ -1041,6 +1041,8 @@ MIME_MAP = {
     ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     ".doc": "application/msword",
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".ppt": "application/vnd.ms-powerpoint",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     ".mp3": "audio/mpeg",
     ".wav": "audio/wav",
     ".m4a": "audio/mp4",
@@ -3085,6 +3087,10 @@ def resolve_model_provider(model_id: str, *, explicitly_picked: bool = False) ->
         # #854 / #894 for Nous, where this guard was originally added).
         _PORTAL_PROVIDERS = {"nous", "opencode-zen", "opencode-go", "nvidia"}
         if config_provider in _PORTAL_PROVIDERS:
+            return _finalize(model_id, config_provider, config_base_url)
+        # Google Vertex AI models carry the "google/" publisher prefix that the Vertex
+        # endpoint expects (e.g. "google/gemini-3.8-flash"). Preserve full model id.
+        if _canon_config_provider == "vertex" and prefix == "google":
             return _finalize(model_id, config_provider, config_base_url)
         # If prefix matches config provider exactly, strip it and use that provider directly.
         # e.g. config=anthropic, model=anthropic/claude-... → bare name to anthropic API

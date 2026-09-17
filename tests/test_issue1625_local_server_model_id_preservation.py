@@ -185,3 +185,20 @@ def test_openrouter_passes_full_unaffected(monkeypatch):
 ])
 def test_base_url_points_at_local_server_helper(url, expected):
     assert cfg_mod._base_url_points_at_local_server(url) is expected
+
+
+def test_vertex_preserves_google_publisher_prefix(monkeypatch):
+    """Google Vertex AI requires the 'google/' publisher prefix (e.g.
+    'google/gemini-3.8-flash'). resolve_model_provider() must not hijack
+    this to OpenRouter when provider is vertex or aliased."""
+    _patch_cfg(monkeypatch, provider="vertex")
+    model, provider, base_url = cfg_mod.resolve_model_provider("google/gemini-3.8-flash")
+    assert model == "google/gemini-3.8-flash"
+    assert provider == "vertex"
+
+    # Also test with provider alias google-vertex
+    _patch_cfg(monkeypatch, provider="google-vertex")
+    model, provider, base_url = cfg_mod.resolve_model_provider("google/gemini-3.8-flash")
+    assert model == "google/gemini-3.8-flash"
+    assert provider == "google-vertex"
+
