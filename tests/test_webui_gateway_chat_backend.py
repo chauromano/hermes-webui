@@ -1656,3 +1656,66 @@ def test_gateway_chat_worker_stamps_fallback_chunk_model(tmp_path, monkeypatch):
     done_payloads = [item[1] for item in events if item[0] == "done"]
     assert len(done_payloads) == 1
     assert done_payloads[0]["usage"]["used_model"] == "deepseek/deepseek-v4-flash"
+
+
+def test_gateway_chat_carries_session_context_messages(tmp_path, monkeypatch):
+    session_dir = tmp_path / "sessions"
+    session_dir.mkdir()
+    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
+    monkeypatch.setattr(models, "SESSION_INDEX_FILE", session_dir / "_index.json")
+    monkeypatch.setattr(models, "SESSIONS", OrderedDict())
+
+    captured_req = []
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def __iter__(self):
+            yield b'data: {"choices":[{"delta":{"content":"turn 2 response"}}]}\n\n'
+            yield b'data: [DONE]\n\n'
+
+    def fake_urlopen(req, timeout=0):
+        captured_req.append(req)
+        return FakeResponse()
+
+    monkeypatch.setenv("HERMES_WEBUI_GATEWAY_BASE_URL", "http://gateway.local")
+    monkeypatch.setenv("HERMES_WEBUI_GATEWAY_API_KEY", "secret-token")
+    monkeypatch.setattr(streaming, "_load_webui_prefill_context", lambda cfg: {"status": "empty", "messages": []})
+    monkeypatch.setattr(streaming, "_prefill_messages_with_webui_context", lambda ctx, cfg: [])
+    monkeypatch.setattr(gateway_chat.urllib.request, "urlopen", fake_urlopen)
+
+    s = new_session()
+    stream_id = "stream-gateway-context-test"
+    s.active_stream_id = stream_id
+    s.messages = [
+        {"role": "user", "content": "generate an RFQ"},
+        {"role": "assistant", "content": "Here is the RFQ for network hardware"},
+    ]
+    s.pending_user_message = "update the RFQ"
+    s.save()
+    channel = create_stream_channel()
+    STREAMS[stream_id] = channel
+
+    gateway_chat._run_gateway_chat_streaming(
+        s.session_id,
+        "update the RFQ",
+        "default",
+        str(tmp_path),
+        stream_id,
+        [],
+    )
+
+    chat_reqs = [r for r in captured_req if r.get_full_url().endswith("/v1/chat/completions")]
+    assert len(chat_reqs) == 1
+    payload = json.loads(chat_reqs[0].data.decode("utf-8"))
+    roles_contents = [(m["role"], m["content"]) for m in payload["messages"] if m["role"] in {"user", "assistant"}]
+    assert roles_contents == [
+        ("user", "generate an RFQ"),
+        ("assistant", "Here is the RFQ for network hardware"),
+        ("user", "update the RFQ"),
+    ]
+

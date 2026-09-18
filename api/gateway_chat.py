@@ -605,11 +605,11 @@ def _run_gateway_runs_api_streaming(
             except Exception:
                 logger.debug("Failed to build runs-API multimodal attachment payload", exc_info=True)
                 message_content = str(msg_text or "")
-        from api.streaming import _strip_oob_blocks
+        from api.streaming import _strip_oob_blocks, _session_context_messages
 
         instructions_parts = []
         conversation_history = []
-        for entry in getattr(session, "context_messages", None) or []:
+        for entry in _session_context_messages(session):
             if not isinstance(entry, dict):
                 continue
             role = str(entry.get("role") or "").strip().lower()
@@ -1152,10 +1152,28 @@ def _run_gateway_chat_streaming(
                 except Exception:
                     logger.debug("Failed to build gateway multimodal attachment payload", exc_info=True)
                     message_content = str(msg_text or "")
+            from api.streaming import _strip_oob_blocks, _session_context_messages
+
+            conversation_history_messages = []
+            for entry in _session_context_messages(s):
+                if not isinstance(entry, dict):
+                    continue
+                role = str(entry.get("role") or "").strip().lower()
+                if role not in {"user", "assistant"}:
+                    continue
+                content = entry.get("content")
+                if content is not None:
+                    content = _strip_oob_blocks(content)
+                    conversation_history_messages.append({"role": role, "content": content})
+
             body = {
                 "model": _gateway_model_field(model) or "default",
                 "stream": True,
-                "messages": [*prefill_messages, {"role": "user", "content": message_content}],
+                "messages": [
+                    *prefill_messages,
+                    *conversation_history_messages,
+                    {"role": "user", "content": message_content},
+                ],
             }
             if model_provider:
                 body["provider"] = model_provider
