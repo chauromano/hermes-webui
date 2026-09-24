@@ -8010,6 +8010,8 @@ def _session_model_state_from_request(
     model: str | None,
     requested_provider: str | None,
     current_provider: str | None = None,
+    *,
+    profile: str | None = None,
 ) -> tuple[str | None, str | None]:
     model_value = str(model).strip() if model is not None else None
     provider = (
@@ -8023,9 +8025,22 @@ def _session_model_state_from_request(
             provider = explicit_provider
         elif requested_provider is None:
             provider = _clean_session_model_provider(current_provider)
+        target_profile = profile or _get_active_profile_name()
+        _pp_provider = None
+        _pp_default = None
+        _pp_cfg = None
+        if target_profile:
+            import types
+            _pp_provider, _pp_default, _pp_cfg = _read_profile_model_config(
+                types.SimpleNamespace(profile=target_profile),
+                provider,
+            )
         model_value, provider, _changed = _resolve_compatible_session_model_state(
             model_value,
             provider,
+            profile_provider=_pp_provider,
+            profile_default_model=_pp_default,
+            profile_config=_pp_cfg,
         )
     return model_value, provider
 
@@ -15258,6 +15273,7 @@ def handle_post(handler, parsed) -> bool:
         model, model_provider = _session_model_state_from_request(
             body.get("model"),
             body.get("model_provider"),
+            profile=body.get("profile"),
         )
         try:
             enabled_toolsets = _validate_session_toolsets_shape(body.get("enabled_toolsets"))
@@ -15814,6 +15830,7 @@ def handle_post(handler, parsed) -> bool:
                     body.get("model", s.model),
                     body.get("model_provider") if "model_provider" in body else None,
                     getattr(s, "model_provider", None),
+                    profile=getattr(s, "profile", None) or body.get("profile"),
                 )
                 if model is not None:
                     s.model = model
