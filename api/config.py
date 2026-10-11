@@ -1820,6 +1820,8 @@ _PROVIDER_MODELS = {
         {"id": "gpt-5.4",      "label": "GPT-5.4"},
     ],
     "openai-codex": [
+        {"id": "gpt-6.1-sol",    "label": "GPT-6.1 Sol"},
+        {"id": "gpt-6-astra",    "label": "GPT-6 Astra"},
         {"id": "gpt-6-sol",      "label": "GPT-6 Sol"},
         {"id": "gpt-6-luna",     "label": "GPT-6 Luna"},
         {"id": "gpt-5.6-sol",    "label": "GPT-5.6 Sol"},
@@ -5363,6 +5365,10 @@ _GPT_5_6_REASONING_MODELS = frozenset({
     "gpt-5.6-sol",
     "gpt-5.6-terra",
     "gpt-5.6-luna",
+    "gpt-6-sol",
+    "gpt-6-luna",
+    "gpt-6.1-sol",
+    "gpt-6-astra",
 })
 
 
@@ -5485,14 +5491,14 @@ def _heuristic_reasoning_efforts(model_id: str, provider_id: str) -> list[str]:
     if not model or provider in {"cursor-acp", "copilot-acp"}:
         return []
     bare = model.rsplit("/", 1)[-1]
-    if provider == "openai-codex" and bare.startswith(("gpt-5", "o1", "o3", "o4")):
+    if provider == "openai-codex" and bare.startswith(("gpt-5", "gpt-6", "o1", "o3", "o4")):
         if bare.startswith(("o1", "o3", "o4")):
             return ["low", "medium", "high"]
         return _filter_reasoning_efforts_for_provider(
             list(VALID_REASONING_EFFORTS), model, provider
         )
     if provider in {"copilot", "github-copilot"}:
-        if bare.startswith(("gpt-5", "o1", "o3", "o4")):
+        if bare.startswith(("gpt-5", "gpt-6", "o1", "o3", "o4")):
             if bare.startswith(("o1", "o3", "o4")):
                 return ["low", "medium", "high"]
             return list(VALID_REASONING_EFFORTS)

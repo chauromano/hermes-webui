@@ -12,6 +12,11 @@
 # CPU/RAM metrics on platforms without /proc:  pip install psutil>=5.9
 pyyaml>=6.0
 cryptography>=42.0
+# Core agent bridge dependencies needed by hermes_cli in WebUI:
+ruamel.yaml>=0.18.0
+httpx[socks]>=0.28.0
+psutil>=5.9.0
+python-dotenv>=1.0.0
 # Office workspace preview/edit and sidecar extraction support:
 python-docx>=1.1.2
 openpyxl>=3.1.5
