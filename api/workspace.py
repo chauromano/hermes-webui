@@ -575,12 +575,59 @@ def _migrate_global_workspaces() -> list:
         return []
 
 
+def _default_spaces_root() -> Path | None:
+    for candidate in [Path("/workspace/hermes_default_spaces"), Path("D:/Workspace/hermes_default_spaces")]:
+        try:
+            if candidate.is_dir():
+                return candidate
+        except Exception:
+            pass
+    return None
+
+
+def _ensure_default_spaces(workspaces: list, profile: str | Path | None = None) -> list:
+    root = _default_spaces_root()
+    if root is None:
+        return workspaces
+    try:
+        subdirs = sorted([d.name for d in root.iterdir() if d.is_dir() and not d.name.startswith('.')])
+    except Exception:
+        return workspaces
+    if not subdirs:
+        return workspaces
+
+    def _canon_key(p: str) -> str:
+        s = str(p or "").replace('\\', '/').rstrip('/').lower()
+        return re.sub(r'^[a-z]:/workspace/', '/workspace/', s)
+
+    norm_existing = set()
+    result = []
+    for w in workspaces:
+        p = w.get('path', '')
+        if not p:
+            continue
+        key = _canon_key(p)
+        if key not in norm_existing:
+            norm_existing.add(key)
+            result.append(w)
+
+    for sub in subdirs:
+        sub_path = (root / sub).as_posix() if root.as_posix().startswith('/') else str(root / sub)
+        key = _canon_key(sub_path)
+        if key not in norm_existing:
+            norm_existing.add(key)
+            result.append({'path': sub_path, 'name': sub})
+
+    return result
+
+
 def load_workspaces(profile: str | Path | None = None) -> list:
     ws_file = _workspaces_file_for_profile(profile)
     if ws_file is not None and ws_file.exists():
         try:
             raw = json.loads(ws_file.read_text(encoding='utf-8'))
             cleaned = _clean_workspace_list(raw, profile=profile)
+            cleaned = _ensure_default_spaces(cleaned, profile=profile)
             if len(cleaned) != len(raw):
                 # Persist the cleaned version so stale entries don't keep reappearing
                 try:
@@ -589,7 +636,7 @@ def load_workspaces(profile: str | Path | None = None) -> list:
                     )
                 except Exception:
                     logger.debug("Failed to persist cleaned workspace list")
-            return cleaned or [{'path': _profile_default_workspace(profile=profile), 'name': 'Home'}]
+            return cleaned or _ensure_default_spaces([{'path': _profile_default_workspace(profile=profile), 'name': 'Home'}], profile=profile)
         except Exception:
             logger.debug("Failed to load workspaces from %s", ws_file)
     # No profile-local file yet.
@@ -607,9 +654,9 @@ def load_workspaces(profile: str | Path | None = None) -> list:
     if is_default:
         migrated = _migrate_global_workspaces()
         if migrated:
-            return migrated
-    # Fresh start: single entry from the profile's configured workspace, labeled "Home"
-    return [{'path': _profile_default_workspace(profile=profile), 'name': 'Home'}]
+            return _ensure_default_spaces(migrated, profile=profile)
+    # Fresh start: profile's configured workspace plus all default spaces
+    return _ensure_default_spaces([{'path': _profile_default_workspace(profile=profile), 'name': 'Home'}], profile=profile)
 
 
 def save_workspaces(workspaces: list, profile: str | Path | None = None) -> None:
