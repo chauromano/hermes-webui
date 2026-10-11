@@ -1969,6 +1969,7 @@ def _run_gateway_chat_streaming(
     the configured Gateway API server into those local events and persists the
     final user/assistant turn back into the WebUI session.
     """
+    turn_started_at = time.time()
     cancel_event = threading.Event()
     q = peek_stream(stream_id)
     if q is not None:
@@ -1995,7 +1996,7 @@ def _run_gateway_chat_streaming(
                 register_active_run(
                     stream_id,
                     session_id=session_id,
-                    started_at=time.time(),
+                    started_at=turn_started_at,
                     phase="gateway-starting",
                     workspace=str(workspace),
                     model=model,
@@ -2082,6 +2083,11 @@ def _run_gateway_chat_streaming(
     usage = {"input_tokens": 0, "output_tokens": 0, "estimated_cost": 0}
     try:
         s = get_session(session_id)
+        if getattr(s, "pending_started_at", None):
+            try:
+                turn_started_at = float(s.pending_started_at)
+            except (ValueError, TypeError):
+                pass
         from api.config import get_config  # imported lazily to avoid config-cycle churn
 
         cfg = get_config()
@@ -2447,7 +2453,7 @@ def _run_gateway_chat_streaming(
             user_msg["timestamp"] = float(
                 active_turn_identity.get("timestamp") or now
             )
-            turn_duration_seconds = max(0.001, time.time() - turn_started_at)
+            turn_duration_seconds = max(0.001, time.time() - (turn_started_at if "turn_started_at" in locals() and turn_started_at else time.time()))
             _used_model = str(
                 (usage.get("gateway_routing") or {}).get("model")
                 or (usage.get("runtime") or {}).get("model")

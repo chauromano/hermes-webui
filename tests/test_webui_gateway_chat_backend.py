@@ -361,7 +361,7 @@ def test_gateway_chat_worker_translates_sse_and_persists_session(tmp_path, monke
     saved = models.get_session(s.session_id)
     assert [m["role"] for m in saved.messages] == ["user", "assistant"]
     assert saved.messages[-1]["content"] == "hello"
-    assert saved.messages[-1]["_usedModel"] == "test-model"
+    assert saved.messages[-1]["_usedModel"] == "alias-target-model"
     assert isinstance(saved.messages[-1]["_turnDuration"], float)
     assert isinstance(saved.messages[0]["timestamp"], float)
     assert isinstance(saved.messages[1]["timestamp"], float)
@@ -423,7 +423,7 @@ def test_gateway_chat_worker_translates_sse_and_persists_session(tmp_path, monke
     assert all(len(item) == 3 and item[2] for item in events)
     done_payloads = [item[1] for item in events if item[0] == "done"]
     assert len(done_payloads) == 1
-    assert done_payloads[0]["usage"]["used_model"] == "test-model"
+    assert done_payloads[0]["usage"]["used_model"] == "alias-target-model"
     assert isinstance(done_payloads[0]["usage"]["duration_seconds"], float)
 
 
