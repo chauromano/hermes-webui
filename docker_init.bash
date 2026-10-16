@@ -277,6 +277,9 @@ if [ "A${whoami}" == "Aroot" ]; then
   chown hermeswebui:hermeswebui /app || error_exit "Failed to set owner of /app to hermeswebui user"
   rsync -av --chown=hermeswebui:hermeswebui /apptoo/ /app/ || error_exit "Failed to sync /apptoo to /app with correct ownership"
 
+  printf '#!/bin/sh\nif [ -x /app/venv/bin/hermes ]; then\n  exec /app/venv/bin/hermes "$@"\nelif [ -x /apptoo/venv/bin/hermes ]; then\n  exec /apptoo/venv/bin/hermes "$@"\nfi\necho "hermes: /app/venv/bin/hermes not found or not executable" >&2\nexit 127\n' > /usr/local/bin/hermes
+  chmod 0755 /usr/local/bin/hermes
+
   if [ -z "${HERMES_WEBUI_DEFAULT_WORKSPACE+x}" ]; then export HERMES_WEBUI_DEFAULT_WORKSPACE="/workspace"; fi
   if [ ! -d "$HERMES_WEBUI_DEFAULT_WORKSPACE" ]; then
     mkdir -p "$HERMES_WEBUI_DEFAULT_WORKSPACE" || error_exit "Failed to create default workspace at $HERMES_WEBUI_DEFAULT_WORKSPACE"
@@ -497,6 +500,7 @@ else
       rsync -a \
         --exclude='*.egg-info' --exclude='build' --exclude='dist' \
         --exclude='__pycache__' --exclude='.git' \
+        --exclude='.venv' --exclude='venv' --exclude='node_modules' \
         --exclude='.playwright' \
         "$_agent_src"/ "$_stage_src"/ \
         || error_exit "Failed to stage hermes-agent source to writable build dir"
@@ -507,10 +511,12 @@ else
         || error_exit "Failed to copy hermes-agent source to writable build dir"
       rm -rf "$_stage_src"/*.egg-info "$_stage_src"/build "$_stage_src"/dist 2>/dev/null || true
       rm -rf "$_stage_src"/.playwright 2>/dev/null || true
+      find "$_stage_src" -type d \( -name .venv -o -name venv -o -name node_modules \) -prune -exec rm -rf {} +
       find "$_stage_src" -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
     fi
     chmod -R u+w "$_stage_src" \
       || error_exit "Failed to make staged hermes-agent source writable (rsync/cp preserved :ro mount perms)"
+    mkdir -p "$_stage_src/.git"
     uv pip install -e "$_stage_src[all]" --trusted-host pypi.org --trusted-host files.pythonhosted.org \
       || error_exit "Failed to install hermes-agent's requirements"
   else
@@ -531,7 +537,12 @@ fi
 
 ensure_hindsight_client_docker_dependency
 
+# Fail before serving requests when the local auxiliary bridge is incomplete.
+python -c 'from openai import OpenAI; import tenacity, requests, truststore' \
+  || error_exit "Missing auxiliary bridge dependencies; recreate the container to install requirements.txt"
+
 echo ""; echo "== Running hermes-webui"
+export PATH="/app/venv/bin:${PATH}"
 cd /app; python server.py || error_exit "hermes-webui failed or exited with an error"
 
 # we should never be here because the server should be running indefinitely, but if we are, we exit safely

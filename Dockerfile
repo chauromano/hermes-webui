@@ -149,6 +149,12 @@ EXPOSE 8787
 HEALTHCHECK --interval=30s --timeout=8s --start-period=10s --retries=3 \
   CMD bash /apptoo/scripts/lib/health_probe.sh localhost 8787 /health 2 >/dev/null || exit 1
 
+# Wrapper for hermes CLI execution in WebUI container
+RUN printf '#!/bin/sh\nif [ -x /app/venv/bin/hermes ]; then\n  exec /app/venv/bin/hermes "$@"\nelif [ -x /apptoo/venv/bin/hermes ]; then\n  exec /apptoo/venv/bin/hermes "$@"\nfi\necho "hermes: /app/venv/bin/hermes not found or not executable" >&2\nexit 127\n' > /usr/local/bin/hermes \
+    && chmod 0755 /usr/local/bin/hermes
+
+ENV PATH="/app/venv/bin:${PATH}"
+
 # docker_init.bash performs root-only bind-mount setup, then drops to hermeswebui
 # before starting the WebUI server. The production image does not ship sudo.
 USER root
