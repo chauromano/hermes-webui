@@ -21,7 +21,9 @@ from api.profiles import _profiles_match
 _CRON_RUN_TS_RE = re.compile(r"\d{8}_\d{6}")
 
 
-_SESSIONS_CACHE_TTL_SECONDS = 2.5
+# Source fingerprints and explicit mutation invalidation remain live on
+# every request. Only unchanged idle stores keep their projection longer.
+_SESSIONS_CACHE_TTL_SECONDS = 15.0
 # #4808: while a turn is actively streaming the frontend polls /api/sessions on a
 # fixed cadence (static/sessions.js `_streamingPollMs`). With the idle TTL of
 # 2.5s, the entry expires between streaming polls, so each poll can find it stale
@@ -368,20 +370,25 @@ def _session_list_cache_key(
 def _session_list_cache_get(
     key: tuple,
     allow_stale: bool = False,
-) -> tuple[dict | None, bool]:
+    *,
+    with_reason: bool = False,
+) -> tuple:
+    def result(payload, fresh, reason=None):
+        return (payload, fresh, reason) if with_reason else (payload, fresh)
+
     now = time.monotonic()
     current_stamp = _session_list_cache_resolved_source_stamp(key)
     with _SESSIONS_CACHE_LOCK:
         entry = _SESSIONS_CACHE.get(key)
         if not entry:
-            return None, False
+            return result(None, False)
         ts, stamp, payload = entry
         if stamp != current_stamp:
             if allow_stale:
                 _SESSIONS_CACHE.move_to_end(key)
-                return _session_list_cache_copy_payload(payload), False
+                return result(_session_list_cache_copy_payload(payload), False, "source")
             _SESSIONS_CACHE.pop(key, None)
-            return None, False
+            return result(None, False)
         # #4808: widen the freshness window while a turn is streaming so the fixed
         # streaming poll cadence doesn't force a full rebuild on every poll.
         ttl = _SESSIONS_CACHE_TTL_SECONDS
@@ -390,12 +397,12 @@ def _session_list_cache_get(
         fresh = (now - ts) < ttl
         if fresh:
             _SESSIONS_CACHE.move_to_end(key)
-            return _session_list_cache_copy_payload(payload), True
+            return result(_session_list_cache_copy_payload(payload), True)
         if allow_stale:
             _SESSIONS_CACHE.move_to_end(key)
-            return _session_list_cache_copy_payload(payload), False
+            return result(_session_list_cache_copy_payload(payload), False, "age")
         _SESSIONS_CACHE.pop(key, None)
-        return None, False
+        return result(None, False)
 
 
 def _session_list_cache_stale_reason(key: tuple) -> str | None:
@@ -612,15 +619,32 @@ def _session_list_cache_source_stamp(key: tuple) -> tuple[tuple[int, int], tuple
     if _cache_all_profiles:
         try:
             from api.models import _all_profiles_cli_contexts
-            contexts, _ = _all_profiles_cli_contexts()
-            all_profiles_state_stamp = tuple(
-                (
-                    _session_list_cache_path_stamp(ctx_db),
-                    _session_list_cache_path_stamp(ctx_db.with_name(f"{ctx_db.name}-wal") if ctx_db else None),
-                    _session_list_cache_state_db_fingerprint(ctx_db),
+            contexts, context_stamp = _all_profiles_cli_contexts()
+            # Context enumeration already read committed DB fingerprints and
+            # file stamps. Reuse those exact reads rather than opening every
+            # profile database a second time. Exclude SHM: reader lock slots
+            # are not a durable content change. Keep home/profile identities.
+            if (
+                isinstance(context_stamp, tuple)
+                and len(context_stamp) == len(contexts)
+                and all(isinstance(entry, tuple) and len(entry) == 3
+                        and isinstance(entry[2], tuple) and len(entry[2]) == 4
+                        for entry in context_stamp)
+            ):
+                all_profiles_state_stamp = tuple(
+                    (home, profile, *parts[:3])
+                    for home, profile, parts in context_stamp
                 )
-                for _home, ctx_db, _prof in contexts
-            )
+            else:
+                # Compatibility for alternate context providers.
+                all_profiles_state_stamp = tuple(
+                    (
+                        _session_list_cache_path_stamp(ctx_db),
+                        _session_list_cache_path_stamp(ctx_db.with_name(f"{ctx_db.name}-wal") if ctx_db else None),
+                        _session_list_cache_state_db_fingerprint(ctx_db),
+                    )
+                    for _home, ctx_db, _prof in contexts
+                )
         except Exception:
             all_profiles_state_stamp = None
 

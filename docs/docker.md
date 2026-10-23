@@ -618,6 +618,19 @@ volumes:
 
 ## Related issues
 
+### Local auxiliary calls in Gateway mode
+
+Goal judging and other auxiliary tasks still execute in the WebUI Python
+environment even when chat uses the Gateway. `requirements.txt` supplies their
+SDKs explicitly because the Agent's Python 3.14 dependency markers do not apply
+to the Python 3.12 WebUI image. Startup checks these imports before serving.
+After updating requirements, recreate the container to replace the cached
+`/app/venv`; keep the named WebUI state volume intact.
+
+For mounted workspaces, configure `HERMES_WRITE_SAFE_ROOT` to include the intended
+container workspace path as well as Hermes state. Linux paths use a colon-separated
+list. A writable Docker mount alone does not grant the file tools write access.
+
 - #1416 — agent-image upgrade requires removing `hermes-agent-src` named volume (see [Upgrading the agent container](#upgrading-the-agent-container))
 - #1389 — `HERMES_HOME_MODE` override (fixed in v0.50.254 — agent honors `HERMES_SKIP_CHMOD` and `HERMES_HOME_MODE`)
 - #1399 — UID alignment in compose files (fixed in v0.50.260 via PR #1428 + this guide)

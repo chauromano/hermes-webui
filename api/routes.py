@@ -2813,7 +2813,7 @@ def _get_cached_session_list_payload(
         except Exception:
             pass
 
-    cached, is_fresh = _session_list_cache_get(key, allow_stale=True)
+    cached, is_fresh, stale_reason = _session_list_cache_get(key, allow_stale=True, with_reason=True)
     if cached is not None and is_fresh:
         if diag is not None:
             try:
@@ -2823,7 +2823,6 @@ def _get_cached_session_list_payload(
         return cached
 
     stale = cached  # now actually a stale payload when one exists, else None
-    stale_reason = _session_list_cache_stale_reason(key) if stale is not None else None
     if stale is not None and stale_reason != "source":
         event, is_owner = _session_list_cache_claim_rebuild(key)
         if is_owner:
@@ -13764,9 +13763,16 @@ def _render_index_shell_base() -> str:
             return cached[1]
     from urllib.parse import quote
 
-    version_token = quote(WEBUI_VERSION, safe="")
+    from api.updates import WEBUI_ASSET_VERSION
+    version_token = quote(WEBUI_ASSET_VERSION, safe="")
     base = (
         index_path.read_text(encoding="utf-8")
+        # The stale-client monitor compares this stamp with settings.webui_version.
+        # Keep release identity separate from the content-based asset URL token.
+        .replace(
+            "window.__HERMES_WEBUI_BUNDLE_VERSION__='__WEBUI_VERSION__';",
+            f"window.__HERMES_WEBUI_BUNDLE_VERSION__='{quote(WEBUI_VERSION, safe='')}';",
+        )
         .replace("__WEBUI_VERSION__", version_token)
         .replace("__MAX_UPLOAD_BYTES__", str(MAX_UPLOAD_BYTES))
     )
@@ -14543,7 +14549,8 @@ def handle_get(handler, parsed) -> bool:
             _password_form_html = _passkey_button_html
         else:
             _password_form_html = ""
-        version_token = quote(WEBUI_VERSION, safe="")
+        from api.updates import WEBUI_ASSET_VERSION
+        version_token = quote(WEBUI_ASSET_VERSION, safe="")
         _page = (
             _LOGIN_PAGE_HTML.replace("{{BOT_NAME}}", _bn)
             .replace("{{BOT_NAME_INITIAL}}", _bn[0].upper())
@@ -14681,7 +14688,8 @@ def handle_get(handler, parsed) -> bool:
             # service worker cache busts automatically on every new deploy.
             from urllib.parse import quote
             from api.updates import WEBUI_VERSION
-            version_token = quote(WEBUI_VERSION, safe="")
+            from api.updates import WEBUI_ASSET_VERSION
+            version_token = quote(WEBUI_ASSET_VERSION, safe="")
             text = sw_path.read_text(encoding="utf-8").replace(
                 "__WEBUI_VERSION__", version_token
             )
@@ -19075,10 +19083,10 @@ def _serve_static(handler, parsed):
     # SHELL_ASSETS list relies on the same convention. So a fingerprinted URL
     # is safe to cache aggressively: any redeploy changes the URL.
     version_values = parse_qs(parsed.query, keep_blank_values=True).get("v", [""])
-    has_fingerprint = bool(version_values[0])
+    has_fingerprint = bool(version_values[0]) and version_values[0] != "unknown"
     cache_control = (
         "public, max-age=31536000, immutable" if has_fingerprint
-        else "public, max-age=300"
+        else ("public, no-cache" if version_values[0] == "unknown" else "public, max-age=300")
     )
 
     # 304 short-circuit on conditional GET.

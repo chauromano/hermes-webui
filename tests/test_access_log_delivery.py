@@ -34,7 +34,7 @@ def test_successful_chat_start_delivers_access_record(tmp_path, capture):
         handler.client_address = ("127.0.0.1", 12345)
         handler.headers = {}
         handler.wfile = io.BytesIO()
-        handler._req_t0 = time.time()
+        handler._req_t0 = time.monotonic()
         session = Session(session_id="log-delivery", model="fixture")
         original = sys.stdout
         captured = io.StringIO()

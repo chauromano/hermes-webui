@@ -982,6 +982,37 @@ def read_importable_agent_session_rows(
                 "                    s.started_at DESC"
             )
 
+        # A message row can contain megabytes of tool/image payload. The
+        # old join reads those table pages just to count roles. Once explicit
+        # drained maintenance has installed the role covering index, calculate
+        # each scalar from indexes instead. Never create an index in this reader.
+        role_index_present = False
+        if messages_index_present and 'role' in message_cols:
+            cur.execute("PRAGMA index_list(messages)")
+            for index_row in cur.fetchall():
+                if index_row[4]:  # partial indexes cannot count every message
+                    continue
+                index_name = str(index_row[1]).replace('"', '""')
+                cur.execute(f'PRAGMA index_xinfo("{index_name}")')
+                keys = [(r[2], str(r[4]).upper()) for r in cur.fetchall() if r[5]]
+                if keys[:2] == [('session_id', 'BINARY'), ('role', 'NOCASE')]:
+                    role_index_present = True
+                    break
+        if role_index_present:
+            actual_count_expr = (
+                f"(SELECT COUNT(mc.{count_col}) FROM messages mc WHERE mc.session_id = s.id)"
+            )
+            user_message_count_expr = (
+                "(SELECT COUNT(*) FROM messages mu WHERE mu.session_id = s.id "
+                "AND mu.role COLLATE NOCASE = 'user')"
+            )
+            last_activity_expr = (
+                "(SELECT MAX(mt.timestamp) FROM messages mt WHERE mt.session_id = s.id)"
+            )
+            join_clause = ""
+            group_by_clause = ""
+            order_by_clause = "ORDER BY COALESCE(last_activity, s.started_at) DESC"
+
         select_sql = f"""
             SELECT s.id, s.title, s.model, s.message_count,
                    s.started_at, s.source,

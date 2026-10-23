@@ -62,3 +62,17 @@ def test_log_request_includes_first_forwarded_for_address(log_output):
     record = json.loads(line.removeprefix("[webui] "))
     assert record["remote"] == "192.0.2.10"
     assert record["forwarded_for"] == "203.0.113.7"
+
+
+
+def test_log_request_duration_ignores_wall_clock_changes(log_output, monkeypatch):
+    import server
+    handler = Handler.__new__(Handler)
+    handler.command = "GET"
+    handler.path = "/api/sessions"
+    handler._req_t0 = 10.0
+    monkeypatch.setattr(server.time, "monotonic", lambda: 10.125)
+    monkeypatch.setattr(server.time, "time", lambda: -50000.0)
+    Handler.log_request(handler, "200")
+    record = json.loads(log_output.getvalue().strip().removeprefix("[webui] "))
+    assert record["ms"] == 125.0

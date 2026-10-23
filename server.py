@@ -355,7 +355,7 @@ class Handler(BaseHTTPRequestHandler):
     def log_request(self, code: str='-', size: str='-') -> None:
         """Structured JSON logs for each request."""
         import json as _json
-        duration_ms = round((time.time() - getattr(self, '_req_t0', time.time())) * 1000, 1)
+        duration_ms = round((time.monotonic() - getattr(self, '_req_t0', time.monotonic())) * 1000, 1)
         remote = '-'
         try:
             if getattr(self, 'client_address', None):
@@ -381,7 +381,7 @@ class Handler(BaseHTTPRequestHandler):
         self._safe_webui_print(f'[webui] {record}')
 
     def do_GET(self) -> None:
-        self._req_t0 = time.time(); reset_trusted_auth_request_state(self)
+        self._req_t0 = time.monotonic(); reset_trusted_auth_request_state(self)
         cookie_profile = get_profile_cookie(self)
         if cookie_profile:
             set_request_profile(cookie_profile)
@@ -407,7 +407,7 @@ class Handler(BaseHTTPRequestHandler):
             clear_request_profile()
 
     def _handle_write(self, route_func) -> None:
-        self._req_t0 = time.time(); reset_trusted_auth_request_state(self)
+        self._req_t0 = time.monotonic(); reset_trusted_auth_request_state(self)
         cookie_profile = get_profile_cookie(self)
         if cookie_profile:
             set_request_profile(cookie_profile)
@@ -443,7 +443,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_OPTIONS(self) -> None:
         """Handle CORS preflight requests (headers emitted by api.routes)."""
-        self._req_t0 = time.time()
+        self._req_t0 = time.monotonic()
         self.send_response(200)
         apply_cors_preflight_headers(self)
         # Frame the empty preflight: without Content-Length an HTTP/1.1 keep-alive

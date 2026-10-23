@@ -663,7 +663,28 @@ def _detect_agent_version() -> str:
 
 
 # Resolved once at import time — tags cannot change without a process restart.
+def _detect_webui_asset_version(root: Path, version: str) -> str:
+    """Fingerprint shell content, including local builds without a Git version."""
+    digest = hashlib.sha256()
+    static = Path(root) / 'static'
+    try:
+        paths = sorted(p for p in static.rglob('*') if p.is_file()
+                       and p.suffix in {'.js', '.css', '.html'})
+        if not paths:
+            return version
+        for path in paths:
+            digest.update(path.relative_to(static).as_posix().encode('utf-8'))
+            digest.update(b'\0')
+            digest.update(path.read_bytes())
+            digest.update(b'\0')
+        return f'{version}-{digest.hexdigest()[:16]}'
+    except OSError:
+        # Unversioned assets must revalidate when content cannot be fingerprinted.
+        return 'unknown'
+
+
 WEBUI_VERSION: str = _detect_webui_version()
+WEBUI_ASSET_VERSION: str = _detect_webui_asset_version(REPO_ROOT, WEBUI_VERSION)
 AGENT_VERSION: str = _detect_agent_version()
 
 

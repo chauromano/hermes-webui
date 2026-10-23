@@ -19,7 +19,7 @@ from urllib.parse import quote
 
 import api.config as api_config
 import api.routes as routes
-from api.updates import WEBUI_VERSION
+from api.updates import WEBUI_ASSET_VERSION, WEBUI_VERSION
 
 
 def _old_inline_render(csrf_token: str) -> str:
@@ -27,7 +27,11 @@ def _old_inline_render(csrf_token: str) -> str:
     index_path = api_config.get_index_html_path()
     return (
         index_path.read_text(encoding="utf-8")
-        .replace("__WEBUI_VERSION__", quote(WEBUI_VERSION, safe=""))
+        .replace(
+            "window.__HERMES_WEBUI_BUNDLE_VERSION__='__WEBUI_VERSION__';",
+            f"window.__HERMES_WEBUI_BUNDLE_VERSION__='{quote(WEBUI_VERSION, safe='')}';",
+        )
+        .replace("__WEBUI_VERSION__", quote(WEBUI_ASSET_VERSION, safe=""))
         .replace("__MAX_UPLOAD_BYTES__", str(routes.MAX_UPLOAD_BYTES))
         .replace("__CSRF_TOKEN_JSON__", json.dumps(csrf_token))
     )
@@ -107,3 +111,10 @@ def test_cache_invalidates_on_index_path_change(tmp_path, monkeypatch):
 
     assert "bravo" in rendered
     assert "alpha" not in rendered
+
+
+
+def test_asset_digest_does_not_change_the_release_stamp_used_by_skew_monitor():
+    base = routes._render_index_shell_base()
+    assert f"window.__HERMES_WEBUI_BUNDLE_VERSION__='{quote(WEBUI_VERSION, safe='')}';" in base
+    assert f"static/sessions.js?v={quote(WEBUI_ASSET_VERSION, safe='')}" in base
