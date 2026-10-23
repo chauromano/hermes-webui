@@ -69,8 +69,11 @@ def test_successful_chat_start_delivers_access_record(tmp_path, capture):
         assert json.loads(response.split(b"\\r\\n\\r\\n", 1)[1])["stream_id"] == "log-stream"
     ''')
     env = {
+        # Windows socket initialization requires the real OS directory in a clean child env.
+        **{key: os.environ[key] for key in ("SystemRoot", "WINDIR") if key in os.environ},
         "PATH": os.environ["PATH"],
         "HOME": str(tmp_path),
+        "USERPROFILE": str(tmp_path),
         "HERMES_HOME": str(tmp_path / "home"),
         "HERMES_WEBUI_STATE_DIR": str(tmp_path / "state"),
         "HERMES_WEBUI_TEST_NETWORK_BLOCK": "1",
