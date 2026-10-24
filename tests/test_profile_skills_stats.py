@@ -5,6 +5,16 @@ from api import profiles
 from tests.conftest import requires_agent_modules
 
 
+def test_disabled_profile_skill_counts_do_not_touch_filesystem(monkeypatch):
+    monkeypatch.setenv('HERMES_WEBUI_PROFILE_SKILL_COUNTS', '0')
+
+    class NoFilesystem:
+        def __fspath__(self):
+            raise AssertionError('decorative counts must not scan storage')
+
+    assert profiles._get_profile_skills_stats(NoFilesystem()) == (0, 0)
+
+
 def _write_skill(root: Path, name: str, platforms=None):
     skill_dir = root / "skills" / name
     skill_dir.mkdir(parents=True, exist_ok=True)

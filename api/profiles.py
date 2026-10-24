@@ -2093,6 +2093,13 @@ def _get_profile_skills_stats(profile_dir: Path) -> tuple[int, int]:
     is only a safety-net upper bound that forces an occasional full recompute
     even when the mtime probe sees no change.
     """
+    # Counts are decorative metadata, never a capability/skill enablement gate.
+    # Operators on slow shared filesystems can omit them without walking every
+    # profile's skill tree on the request path. Zero uses the existing UI's
+    # unknown-count presentation; skill discovery/execution is unaffected.
+    if os.environ.get('HERMES_WEBUI_PROFILE_SKILL_COUNTS', '1').lower() in ('0', 'false', 'off'):
+        return (0, 0)
+
     import time
     profile_dir = Path(profile_dir).resolve()
     now = time.time()

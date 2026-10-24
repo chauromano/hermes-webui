@@ -565,6 +565,12 @@ python3 -c "import hermes_constants; print(hasattr(hermes_constants, 'pin_proces
 
 ## Other troubleshooting
 
+On slow shared filesystems, profile picker requests can spend minutes walking
+every profile's skill tree for decorative enabled/total counts. Set
+`HERMES_WEBUI_PROFILE_SKILL_COUNTS=0` and restart WebUI to omit those counts.
+The default is `1`; skill discovery, enablement, and execution are unchanged.
+This avoids the scans rather than extending a cache that could hide setting edits.
+
 This document grows over time. If a recurring failure mode isn't covered here yet, add it via PR. The format for each entry: **Symptom → Why → Diagnostic commands → Fix → When to file a bug**.
 
 Related references:
